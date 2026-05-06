@@ -2,7 +2,7 @@
 -- Shared DB, utilities, scanning logic, events, and slash commands.
 -- All other modules read from ApeTracksAltsDB and call functions exposed here.
 
-print("|cff00ff00ApeTracksAlts v1.1 loaded|r")
+print("|cff00ff00ApeTracksAlts v2.0 loaded|r")
 
 -------------------------------------------------------------------------------
 -- Saved variable & runtime state
@@ -31,9 +31,19 @@ function ATA.EnsureDB()
         class    = select(2, UnitClass("player")),
         level    = UnitLevel("player"),
         gold     = 0,
+        ilvl     = 0,
+        honor    = 0,
+        arena    = 0,
+        runes    = 0,
         lastSeen = 0,
         items    = {},
     }
+    -- Migrate older DB entries that are missing new fields
+    local d = ApeTracksAltsDB[ATA.realm][ATA.player]
+    if d.ilvl  == nil then d.ilvl  = 0 end
+    if d.honor == nil then d.honor = 0 end
+    if d.arena == nil then d.arena = 0 end
+    if d.runes == nil then d.runes = 0 end
 end
 
 function ATA.GetCharData()
@@ -93,10 +103,45 @@ local function PruneItems()
             pruned = pruned + 1
         end
     end
-    -- Silent prune; uncomment for debug feedback:
-    -- if pruned > 0 then
-    --     print(string.format("|cff00ff00ApeTracksAlts|r Pruned %d empty item entries.", pruned))
-    -- end
+end
+
+-- Scans and stores all tracked currencies for the current character.
+-- Honor and arena use dedicated API calls. Rune of Ascension is found
+-- by scanning the currency list and matching by name (Ascension custom ID).
+local function ScanCurrencies()
+    local charData = ATA.GetCharData()
+
+    -- Gold is handled by PLAYER_MONEY — skip here
+
+    -- Honor: GetHonorCurrency() returns current honor points
+    charData.honor = GetHonorCurrency() or 0
+
+    -- Arena points: GetArenaCurrency() returns current arena points
+    charData.arena = GetArenaCurrency() or 0
+
+    -- Rune of Ascension: scan currency list by name match
+    charData.runes = 0
+    local numCurrencies = GetCurrencyListSize()
+    for i = 1, numCurrencies do
+        local name, isHeader, _, _, _, count = GetCurrencyListInfo(i)
+        if not isHeader and name then
+            local lower = name:lower()
+            if lower:find("rune of ascension") or lower:find("runes of ascension") then
+                charData.runes = count or 0
+                break
+            end
+        end
+    end
+
+    -- Average equipped item level from the character sheet
+    local _, equipped = GetAverageItemLevel()
+    charData.ilvl = math.floor(equipped or 0)
+end
+
+-- Called by any module that wants to react to data changes (e.g. Panel refresh).
+-- Modules assign a function to ATA.OnDataChanged to hook in.
+function ATA.NotifyDataChanged()
+    if ATA.OnDataChanged then ATA.OnDataChanged() end
 end
 
 -------------------------------------------------------------------------------
@@ -180,11 +225,40 @@ local function RegisterSlashCommands()
     SlashCmdList["APETRACKSALTS"] = function(msg)
         msg = (msg or ""):lower():match("^%s*(.-)%s*$")
 
-        -- Safe accessor — realm table may be nil after /ata reset
         local realmDB = ApeTracksAltsDB[ATA.realm] or {}
 
-        -- /ata debug
-        if msg == "debug" then
+        if msg == "show" then
+            if ApeTracksAlts.PanelShow then ApeTracksAlts.PanelShow() end
+
+        elseif msg == "hide" then
+            if ApeTracksAlts.PanelHide then ApeTracksAlts.PanelHide() end
+
+        elseif msg == "toggle" then
+            if ApeTracksAlts.PanelToggle then ApeTracksAlts.PanelToggle() end
+
+        elseif msg == "panel" then
+            -- Debug: print frame state and force it visible at center
+            local f = ATAPanel
+            if not f then
+                print("|cffff4444ApeTracksAlts|r ATAPanel frame does not exist!")
+            else
+                print(string.format("|cff00ff00ApeTracksAlts|r Panel debug:"))
+                print(string.format("  Shown: %s", tostring(f:IsShown())))
+                print(string.format("  Visible: %s", tostring(f:IsVisible())))
+                print(string.format("  Size: %.0f x %.0f", f:GetWidth(), f:GetHeight()))
+                print(string.format("  Alpha: %.2f", f:GetAlpha()))
+                local l, t = f:GetLeft(), f:GetTop()
+                print(string.format("  Position: left=%.0f top=%.0f", l or -1, t or -1))
+                -- Force it to center and show
+                f:ClearAllPoints()
+                f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
+                f:SetAlpha(1)
+                f:Show()
+                if ApeTracksAlts.PanelRefresh then ApeTracksAlts.PanelRefresh() end
+                print("  Forced to center and shown.")
+            end
+
+        elseif msg == "debug" then
             local charCount, itemCount = 0, 0
             for _, c in pairs(realmDB) do
                 charCount = charCount + 1
@@ -195,24 +269,23 @@ local function RegisterSlashCommands()
                 ATA.realm, charCount, itemCount
             ))
 
-        -- /ata list
         elseif msg == "list" then
             print("|cff00ff00ApeTracksAlts|r — Characters on " .. ATA.realm .. ":")
             for charName, data in pairs(realmDB) do
                 local itemCount = 0
                 for _ in pairs(data.items) do itemCount = itemCount + 1 end
                 local staleTag = ATA.IsStale(data) and " |cffff4444[stale]|r" or ""
-                print(string.format("  %s (Lvl %d %s) — %d items  %s%s",
+                print(string.format("  %s (Lvl %d %s | iLvl %d) — %d items  %s%s",
                     ATA.ColorName(charName, data.class),
                     data.level or 0,
                     data.class or "?",
+                    data.ilvl  or 0,
                     itemCount,
                     ATA.FormatGold(data.gold),
                     staleTag
                 ))
             end
 
-        -- /ata gold
         elseif msg == "gold" then
             local total = 0
             print("|cff00ff00ApeTracksAlts|r — Gold on " .. ATA.realm .. ":")
@@ -227,10 +300,8 @@ local function RegisterSlashCommands()
             end
             print("  |cffffff00Account Total: " .. ATA.FormatGold(total) .. "|r")
 
-        -- /ata reset
         elseif msg == "reset" then
             ApeTracksAltsDB = {}
-            -- Immediately re-seed so the current session stays functional
             ATA.EnsureDB()
             local charData = ATA.GetCharData()
             charData.lastSeen = time()
@@ -239,13 +310,15 @@ local function RegisterSlashCommands()
             ScanBags()
             print("|cff00ff00ApeTracksAlts|r Database reset. Current character re-seeded.")
 
-        -- /ata help or anything unrecognized
         else
             print("|cff00ff00ApeTracksAlts|r Commands:")
-            print("  /ata list   — All tracked characters (level, class, gold, stale flag)")
+            print("  /ata show   — Open the character panel")
+            print("  /ata hide   — Close the character panel")
+            print("  /ata toggle — Toggle the character panel")
+            print("  /ata list   — All tracked characters")
             print("  /ata gold   — Gold summary across all alts")
-            print("  /ata debug  — DB stats (character + item counts)")
-            print("  /ata reset  — Wipe the database (current char re-seeded immediately)")
+            print("  /ata debug  — DB stats")
+            print("  /ata reset  — Wipe the database")
         end
     end
 end
@@ -269,6 +342,8 @@ frame:RegisterEvent("MAIL_INBOX_UPDATE")
 frame:RegisterEvent("MAIL_CLOSED")
 frame:RegisterEvent("PLAYER_MONEY")
 frame:RegisterEvent("PLAYER_LEVEL_UP")
+frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
+frame:RegisterEvent("UPDATE_INSTANCE_INFO")
 
 -- Debounced bank scan: restarts on every slot change so the scan always
 -- fires 0.3s after the last deposit/withdrawal, not just on open.
@@ -315,25 +390,30 @@ frame:SetScript("OnEvent", function(_, event)
 
         ATA.EnsureDB()
 
-        -- Refresh login timestamp, level, and gold on every login
         local charData = ATA.GetCharData()
         charData.lastSeen = time()
         charData.level    = UnitLevel("player")
         charData.gold     = GetMoney()
 
+        -- Delay currency/ilvl scan slightly so character data is fully loaded
+        C_Timer.After(2, function()
+            if ATA.realm then
+                ScanCurrencies()
+                ATA.NotifyDataChanged()
+            end
+        end)
+
         PruneItems()
         ScanBags()
         RegisterSlashCommands()
 
-        -- Notify other modules that core is ready
         if ApeTracksAlts.OnCoreReady then ApeTracksAlts.OnCoreReady() end
 
     elseif event == "BAG_UPDATE" then
         if ATA.realm then
             ScanBags()
-            -- If the bank is open, any bag change also means the bank contents
-            -- may have changed (deposit/withdrawal). Rescan both together.
             if bankIsOpen then ScanBank() end
+            ATA.NotifyDataChanged()
         end
 
     elseif event == "BANKFRAME_OPENED" then
@@ -359,11 +439,32 @@ frame:SetScript("OnEvent", function(_, event)
     elseif event == "PLAYER_MONEY" then
         if ATA.realm then
             ATA.GetCharData().gold = GetMoney()
+            ATA.NotifyDataChanged()
         end
 
     elseif event == "PLAYER_LEVEL_UP" then
         if ATA.realm then
             ATA.GetCharData().level = UnitLevel("player")
+            ATA.NotifyDataChanged()
+        end
+
+    elseif event == "PLAYER_EQUIPMENT_CHANGED" then
+        -- Rescan ilvl when gear changes
+        if ATA.realm then
+            C_Timer.After(0.5, function()
+                if ATA.realm then
+                    local _, equipped = GetAverageItemLevel()
+                    ATA.GetCharData().ilvl = math.floor(equipped or 0)
+                    ATA.NotifyDataChanged()
+                end
+            end)
+        end
+
+    elseif event == "UPDATE_INSTANCE_INFO" then
+        -- Good time to refresh currencies (honor/arena update after BGs/arenas)
+        if ATA.realm then
+            ScanCurrencies()
+            ATA.NotifyDataChanged()
         end
     end
 end)

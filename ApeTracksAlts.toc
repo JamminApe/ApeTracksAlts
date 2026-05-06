@@ -1,11 +1,13 @@
 ## Interface: 30300
 ## Title: ApeTracksAlts
-## Notes: Tracks items, gold, and alt data across all characters — shown in tooltips.
+## Notes: Tracks items, gold, currencies, and alt data across all characters.
 ## Author: JamminApe
-## Version: 1.1
-## SavedVariables: ApeTracksAltsDB
+## Version: 2.0
+## SavedVariables: ApeTracksAltsDB, ApeTracksAltsCfg
 
-# Load order matters: Core must be first, then modules, then tooltip last.
+# Load order: Core first, Config second, then modules, Tooltip last.
 Core.lua
+Config.lua
 Gold.lua
+Panel.lua
 Tooltip.lua
