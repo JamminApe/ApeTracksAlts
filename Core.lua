@@ -473,3 +473,5 @@ frame:SetScript("OnEvent", function(_, event)
         end
     end
 end)
+
+print("|cff00ff00ApeTracksAlts|r Core.lua fully loaded")

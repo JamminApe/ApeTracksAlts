@@ -2,6 +2,8 @@
 -- Persistent settings store. Loaded before all other modules so Panel.lua
 -- and future phases can read config values safely on startup.
 
+print("|cff00ff00ApeTracksAlts|r Config.lua executing...")
+
 ApeTracksAltsCfg = ApeTracksAltsCfg or {}
 
 local defaults = {
@@ -31,6 +33,9 @@ end
 
 ApplyDefaults(ApeTracksAltsCfg, defaults)
 
--- Expose config on the global namespace for other modules.
-ApeTracksAlts = ApeTracksAlts or {}
-ApeTracksAlts.cfg = ApeTracksAltsCfg
+-- Add config to the existing ApeTracksAlts namespace created by Core.lua
+if ApeTracksAlts then
+    ApeTracksAlts.cfg = ApeTracksAltsCfg
+else
+    print("|cffff4444ApeTracksAlts|r Config.lua: ApeTracksAlts global not found!")
+end
