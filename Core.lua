@@ -228,7 +228,12 @@ local function RegisterSlashCommands()
         local realmDB = ApeTracksAltsDB[ATA.realm] or {}
 
         if msg == "show" then
-            if ApeTracksAlts.PanelShow then ApeTracksAlts.PanelShow() end
+            print("|cff00ff00ApeTracksAlts|r /ata show — PanelShow = " .. tostring(ApeTracksAlts.PanelShow))
+            if ApeTracksAlts.PanelShow then
+                ApeTracksAlts.PanelShow()
+            else
+                print("|cffff4444ApeTracksAlts|r Panel.lua did not load correctly — PanelShow is nil")
+            end
 
         elseif msg == "hide" then
             if ApeTracksAlts.PanelHide then ApeTracksAlts.PanelHide() end
