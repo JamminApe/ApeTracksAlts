@@ -2,7 +2,7 @@
 -- Shared DB, utilities, scanning logic, events, and slash commands.
 -- All other modules read from ApeTracksAltsDB and call functions exposed here.
 
-print("|cff00ff00ApeTracksAlts v3.0 loaded|r")
+print("|cff00ff00ApeTracksAlts v4.0 loaded|r")
 
 -------------------------------------------------------------------------------
 -- Saved variable & runtime state
@@ -28,24 +28,29 @@ local STALE_DAYS = 7
 function ATA.EnsureDB()
     ApeTracksAltsDB[ATA.realm]             = ApeTracksAltsDB[ATA.realm] or {}
     ApeTracksAltsDB[ATA.realm][ATA.player] = ApeTracksAltsDB[ATA.realm][ATA.player] or {
-        class    = select(2, UnitClass("player")),
-        race     = UnitRace("player"),
-        level    = UnitLevel("player"),
-        gold     = 0,
-        ilvl     = 0,
-        honor    = 0,
-        arena    = 0,
-        runes    = 0,
-        lastSeen = 0,
-        items    = {},
+        class        = select(2, UnitClass("player")),
+        race         = UnitRace("player"),
+        level        = UnitLevel("player"),
+        gold         = 0,
+        ilvl         = 0,
+        honor        = 0,
+        arena        = 0,
+        runes        = 0,
+        lastSeen     = 0,
+        items        = {},
+        lockouts     = {},
+        professions  = {},
+        recipes      = {},
     }
-    -- Migrate older DB entries that are missing new fields
     local d = ApeTracksAltsDB[ATA.realm][ATA.player]
-    if d.ilvl  == nil then d.ilvl  = 0 end
-    if d.honor == nil then d.honor = 0 end
-    if d.arena == nil then d.arena = 0 end
-    if d.runes == nil then d.runes = 0 end
-    if d.race  == nil then d.race  = UnitRace("player") end
+    if d.ilvl       == nil then d.ilvl       = 0  end
+    if d.honor      == nil then d.honor      = 0  end
+    if d.arena      == nil then d.arena      = 0  end
+    if d.runes      == nil then d.runes      = 0  end
+    if d.race       == nil then d.race       = UnitRace("player") end
+    if d.lockouts   == nil then d.lockouts   = {}  end
+    if d.professions== nil then d.professions= {}  end
+    if d.recipes    == nil then d.recipes    = {}  end
 end
 
 function ATA.GetCharData()
@@ -231,6 +236,103 @@ local function ScanMail()
         end
     end
 end
+
+-- Profession icon texture mapping
+ATA.ProfessionIcons = {
+    ["Alchemy"]        = "Interface\\Icons\\Trade_Alchemy",
+    ["Blacksmithing"]  = "Interface\\Icons\\Trade_BlackSmithing",
+    ["Enchanting"]     = "Interface\\Icons\\Trade_Engraving",
+    ["Engineering"]    = "Interface\\Icons\\Trade_Engineering",
+    ["Herbalism"]      = "Interface\\Icons\\Spell_Nature_Naturetouchgrow",
+    ["Inscription"]    = "Interface\\Icons\\INV_Inscription_Tradeskill01",
+    ["Jewelcrafting"]  = "Interface\\Icons\\INV_Misc_Gem_01",
+    ["Leatherworking"] = "Interface\\Icons\\Trade_Leatherworking",
+    ["Mining"]         = "Interface\\Icons\\Trade_Mining",
+    ["Skinning"]       = "Interface\\Icons\\INV_Weapon_ShortBlade_01",
+    ["Tailoring"]      = "Interface\\Icons\\Trade_Tailoring",
+}
+
+local function ScanLockouts()
+    if not ATA.realm then return end
+    local charData = ATA.GetCharData()
+    charData.lockouts = {}
+    local numInstances = GetNumSavedInstances()
+    for i = 1, numInstances do
+        local name, id, reset, difficulty = GetSavedInstanceInfo(i)
+        if name then
+            table.insert(charData.lockouts, {
+                name       = name,
+                id         = id,
+                reset      = reset,
+                difficulty = difficulty,
+                expires    = time() + reset,
+            })
+        end
+    end
+    ATA.NotifyDataChanged()
+end
+
+local function ScanProfessions()
+    if not ATA.realm then return end
+    local charData = ATA.GetCharData()
+    charData.professions = {}
+
+    -- GetProfessions() is Cataclysm+. In WotLK 3.3.5 we iterate skill lines.
+    -- Primary professions have type "Secondary" = false in the skill header.
+    local primaryProfs = {
+        ["Alchemy"]        = true,
+        ["Blacksmithing"]  = true,
+        ["Enchanting"]     = true,
+        ["Engineering"]    = true,
+        ["Herbalism"]      = true,
+        ["Inscription"]    = true,
+        ["Jewelcrafting"]  = true,
+        ["Leatherworking"] = true,
+        ["Mining"]         = true,
+        ["Skinning"]       = true,
+        ["Tailoring"]      = true,
+    }
+
+    local numSkillLines = GetNumSkillLines()
+    for i = 1, numSkillLines do
+        local skillName, isHeader, _, rank, _, _, maxRank = GetSkillLineInfo(i)
+        if skillName and not isHeader and primaryProfs[skillName] then
+            local icon = ATA.ProfessionIcons[skillName]
+            table.insert(charData.professions, {
+                name    = skillName,
+                icon    = icon or "",
+                rank    = rank    or 0,
+                maxRank = maxRank or 0,
+            })
+        end
+    end
+    ATA.NotifyDataChanged()
+end
+
+-- Scan recipes from an open profession window
+local function ScanRecipes()
+    if not ATA.realm then return end
+    -- Guard: these APIs may not exist on all Ascension builds
+    if not GetTradeSkillLine or not GetNumTradeSkills or not GetTradeSkillInfo then return end
+    local charData = ATA.GetCharData()
+    local profName = GetTradeSkillLine()
+    if not profName or profName == "UNKNOWN" then return end
+    charData.recipes = charData.recipes or {}
+    charData.recipes[profName] = {}
+    local lastScanKey = "lastRecipeScan_" .. profName
+    charData[lastScanKey] = time()
+    local numSkills = GetNumTradeSkills()
+    for i = 1, numSkills do
+        local skillName, skillType = GetTradeSkillInfo(i)
+        if skillName and skillType ~= "header" then
+            charData.recipes[profName][skillName:lower()] = true
+        end
+    end
+    ATA.NotifyDataChanged()
+end
+
+-- Expose ScanRecipes for the TRADE_SKILL_SHOW hook
+ATA.ScanRecipes = ScanRecipes
 
 -------------------------------------------------------------------------------
 -- Slash commands
@@ -491,8 +593,19 @@ local function RegisterSlashCommands()
                 else
                     print("|cff00ff00ApeTracksAlts|r Usage: /ata set stale <days>")
                 end
+            elseif key == "profstale" then
+                local days = tonumber(val)
+                if days and days >= 7 then
+                    ApeTracksAltsCfg.stale = ApeTracksAltsCfg.stale or {}
+                    ApeTracksAltsCfg.stale.profDays = days
+                    print(string.format("|cff00ff00ApeTracksAlts|r Profession stale threshold set to %d days.", days))
+                elseif days and days < 7 then
+                    print("|cff00ff00ApeTracksAlts|r Profession stale minimum is 7 days.")
+                else
+                    print("|cff00ff00ApeTracksAlts|r Usage: /ata set profstale <days> (minimum 7)")
+                end
             else
-                print("|cff00ff00ApeTracksAlts|r Unknown setting. Available: stale")
+                print("|cff00ff00ApeTracksAlts|r Unknown setting. Available: stale, profstale")
             end
 
         elseif msg == "config" then
@@ -509,6 +622,7 @@ local function RegisterSlashCommands()
             local function onoff(v) return (v ~= false) and "|cff00ff00on|r" or "|cffff4444off|r" end
             print("|cff00ff00ApeTracksAlts|r Current Settings:")
             print(string.format("  Stale threshold  : %d days  (/ata set stale <days>)", ApeTracksAltsCfg.stale.days or 7))
+            print(string.format("  Prof stale       : %d days  (/ata set profstale <days>)", ApeTracksAltsCfg.stale.profDays or 30))
             print(string.format("  Panel on login   : %s  (/ata toggle login)", onoff(ApeTracksAltsCfg.loginOpen)))
             print(string.format("  Tooltip bags     : %s  (/ata toggle bags)",  onoff(ttCfg.showBags)))
             print(string.format("  Tooltip bank     : %s  (/ata toggle bank)",  onoff(ttCfg.showBank)))
@@ -524,6 +638,75 @@ local function RegisterSlashCommands()
             charData.gold     = GetMoney()
             ScanBags()
             print("|cff00ff00ApeTracksAlts|r Database reset. Current character re-seeded.")
+
+        elseif msg:sub(1, 4) == "want" then
+            local args = msg:sub(5):match("^%s*(.-)%s*$") or ""
+            if ATA.HandleWantCmd then
+                ATA.HandleWantCmd(args)
+            else
+                print("|cffff4444ApeTracksAlts|r Wishlist module not loaded.")
+            end
+
+        elseif msg == "locks" then
+            local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+            print("|cff00ff00ApeTracksAlts|r — Lockouts on " .. ATA.realm .. ":")
+            for charName, data in pairs(realmDB2) do
+                local locks = data.lockouts or {}
+                if #locks > 0 then
+                    print(string.format("  %s:", ATA.ColorName(charName, data.class)))
+                    for _, lock in ipairs(locks) do
+                        local remaining = lock.expires - time()
+                        local hours = math.floor(remaining / 3600)
+                        local mins  = math.floor((remaining % 3600) / 60)
+                        print(string.format("    %s — resets in %dh %dm", lock.name, hours, mins))
+                    end
+                else
+                    print(string.format("  %s: |cff888888no lockouts|r", ATA.ColorName(charName, data.class)))
+                end
+            end
+
+        elseif msg == "prof" then
+            local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+            print("|cff00ff00ApeTracksAlts|r — Professions on " .. ATA.realm .. ":")
+            for charName, data in pairs(realmDB2) do
+                local profs = data.professions or {}
+                if #profs > 0 then
+                    local parts = {}
+                    for _, p in ipairs(profs) do
+                        parts[#parts+1] = string.format("%s %d/%d", p.name, p.rank, p.maxRank)
+                    end
+                    print(string.format("  %s: %s", ATA.ColorName(charName, data.class), table.concat(parts, "  |cff888888·|r  ")))
+                else
+                    print(string.format("  %s: |cff888888not scanned yet — open profession book|r", ATA.ColorName(charName, data.class)))
+                end
+            end
+
+        elseif msg:sub(1, 6) == "recipe" then
+            local query = msg:sub(8):match("^%s*(.-)%s*$")
+            if query == "" then
+                print("|cff00ff00ApeTracksAlts|r Usage: /ata recipe <recipe name>")
+            else
+                local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+                local queryLower = query:lower()
+                local found = false
+                print(string.format("|cff00ff00ApeTracksAlts|r Recipes matching '|cffffff00%s|r':", query))
+                for charName, data in pairs(realmDB2) do
+                    local recipes = data.recipes or {}
+                    for profName, profRecipes in pairs(recipes) do
+                        for recipeName in pairs(profRecipes) do
+                            if recipeName:find(queryLower, 1, true) then
+                                local display = recipeName:gsub("^%l", string.upper)
+                                print(string.format("  %s |cff888888(%s)|r — |cffffff00%s|r",
+                                    ATA.ColorName(charName, data.class), profName, display))
+                                found = true
+                            end
+                        end
+                    end
+                end
+                if not found then
+                    print(string.format("|cff00ff00ApeTracksAlts|r No recipe matching '%s' found.", query))
+                end
+            end
 
         elseif msg == "minimap" then
             if ATA.MinimapShow and ATA.MinimapHide then
@@ -550,11 +733,20 @@ local function RegisterSlashCommands()
             print("    /ata list                — All tracked characters")
             print("    /ata gold                — Gold summary across all alts")
             print("    /ata find <item>         — Search for an item across all alts")
+            print("    /ata locks               — Show raid/dungeon lockouts for all alts")
+            print("    /ata prof                — Show professions for all alts")
+            print("    /ata recipe <name>       — Search learned recipes across all alts")
             print("    /ata purge <name>        — Remove a character from the database")
             print("    /ata reset               — Wipe the entire database")
+            print("  |cffffff00Wishlist:|r")
+            print("    /ata want [link or name] — Add item to current character's wishlist")
+            print("    /ata want list           — Show current character's wishlist")
+            print("    /ata want clear <item>   — Remove item from wishlist")
+            print("    /ata want clear all      — Clear entire wishlist")
             print("  |cffffff00Settings:|r")
             print("    /ata config              — Show all current settings")
             print("    /ata set stale <days>    — Set stale threshold (default: 7)")
+            print("    /ata set profstale <days>— Set profession stale threshold (default: 30)")
             print("    /ata toggle login        — Toggle panel auto-open on login")
             print("    /ata toggle bags         — Toggle bags in tooltips")
             print("    /ata toggle bank         — Toggle bank in tooltips")
@@ -589,6 +781,7 @@ frame:RegisterEvent("PLAYER_MONEY")
 frame:RegisterEvent("PLAYER_LEVEL_UP")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UPDATE_INSTANCE_INFO")
+frame:RegisterEvent("TRADE_SKILL_SHOW")
 
 -- Debounced bank scan: restarts on every slot change so the scan always
 -- fires 0.3s after the last deposit/withdrawal, not just on open.
@@ -644,6 +837,8 @@ frame:SetScript("OnEvent", function(_, event)
         C_Timer.After(2, function()
             if ATA.realm then
                 ScanCurrencies()
+                ScanLockouts()
+                ScanProfessions()
                 ATA.NotifyDataChanged()
             end
         end)
@@ -711,10 +906,18 @@ frame:SetScript("OnEvent", function(_, event)
         end
 
     elseif event == "UPDATE_INSTANCE_INFO" then
-        -- Good time to refresh currencies (honor/arena update after BGs/arenas)
         if ATA.realm then
             ScanCurrencies()
+            ScanLockouts()
             ATA.NotifyDataChanged()
+        end
+
+    elseif event == "TRADE_SKILL_SHOW" then
+        if ATA.realm then
+            -- Small delay so the tradeskill window is fully populated
+            C_Timer.After(0.5, function()
+                if ATA.realm then ScanRecipes() end
+            end)
         end
     end
 end)

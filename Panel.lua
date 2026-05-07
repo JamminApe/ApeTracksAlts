@@ -9,24 +9,26 @@ local headerBtns = {}
 local rowPool, activeRows = {}, {}
 
 local COL = {
-    { key="name",  label="Character", width=110, align="LEFT"   },
-    { key="level", label="Lvl",       width=28,  align="CENTER" },
-    { key="race",  label="Race",      width=72,  align="LEFT"   },
-    { key="ilvl",  label="iLvl",      width=34,  align="CENTER" },
-    { key="gold",  label="Gold",      width=100, align="RIGHT"  },
-    { key="honor", label="Honor",     width=48,  align="RIGHT"  },
-    { key="arena", label="Arena",     width=40,  align="RIGHT"  },
-    { key="runes", label="Runes",     width=46,  align="RIGHT"  },
-    { key="items", label="Items",     width=40,  align="RIGHT"  },
-    { key="seen",  label="Last Seen", width=65,  align="RIGHT"  },
+    { key="name",  label="Character", width=130, align="LEFT"   },
+    { key="level", label="Lvl",       width=34,  align="CENTER" },
+    { key="race",  label="Race",      width=85,  align="LEFT"   },
+    { key="ilvl",  label="iLvl",      width=42,  align="CENTER" },
+    { key="gold",  label="Gold",      width=118, align="RIGHT"  },
+    { key="honor", label="Honor",     width=56,  align="RIGHT"  },
+    { key="arena", label="Arena",     width=58,  align="RIGHT"  },
+    { key="runes", label="Runes",     width=58,  align="RIGHT"  },
+    { key="locks", label="Locks",     width=54,  align="CENTER" },
+    { key="profs", label="Profs",     width=58,  align="CENTER" },
+    { key="items", label="Items",     width=60,  align="RIGHT"  },
+    { key="seen",  label="Last Seen", width=95,  align="RIGHT"  },
 }
 
-local ROW_H    = 16
-local HEADER_H = 20
-local TITLE_H  = 24
-local FOOTER_H = 22
-local PAD      = 8
-local GAP      = 4
+local ROW_H    = 22
+local HEADER_H = 26
+local TITLE_H  = 30
+local FOOTER_H = 28
+local PAD      = 10
+local GAP      = 6
 local PANEL_W = PAD*2
 for _,c in ipairs(COL) do PANEL_W = PANEL_W + c.width + GAP end
 
@@ -55,6 +57,7 @@ local function SortVal(data, name, key)
     if key=="honor" then return data.honor or 0 end
     if key=="arena" then return data.arena or 0 end
     if key=="runes" then return data.runes or 0 end
+    if key=="locks" then return #(data.lockouts or {}) end
     if key=="seen"  then return data.lastSeen or 0 end
     if key=="items" then
         local n=0
@@ -68,6 +71,9 @@ local function Dash(n)
     return (n and n>0) and tostring(n) or "-"
 end
 
+local FONT_PATH = "Fonts\\FRIZQT__.TTF"
+local FONT_SIZE  = 14
+
 local function AcquireRow()
     local row = table.remove(rowPool)
     if not row then
@@ -76,7 +82,8 @@ local function AcquireRow()
         row.cells = {}
         local x = 0
         for i,col in ipairs(COL) do
-            local fs = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+            local fs = row:CreateFontString(nil, "OVERLAY")
+            fs:SetFont(FONT_PATH, FONT_SIZE)
             fs:SetWidth(col.width)
             fs:SetHeight(ROW_H)
             fs:SetPoint("LEFT", row, "LEFT", x, 0)
@@ -135,14 +142,17 @@ local function BuildPanel()
     bg:SetColorTexture(0.05, 0.05, 0.05, 0.92)
 
     -- Title
-    local titleFs = panel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-    titleFs:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -6)
+    local titleFs = panel:CreateFontString(nil, "OVERLAY")
+    titleFs:SetFont(FONT_PATH, 14)
+    titleFs:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, -8)
     titleFs:SetTextColor(0.2, 1, 0.2)
     titleFs:SetText("ApeTracksAlts")
 
-    realmText = panel:CreateFontString(nil, "OVERLAY", "GameFontDisableSmall")
-    realmText:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -28, -8)
+    realmText = panel:CreateFontString(nil, "OVERLAY")
+    realmText:SetFont(FONT_PATH, FONT_SIZE - 1)
+    realmText:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -28, -10)
     realmText:SetJustifyH("RIGHT")
+    realmText:SetTextColor(0.6, 0.6, 0.6)
 
     local titleSep = panel:CreateTexture(nil, "ARTWORK")
     titleSep:SetHeight(1)
@@ -168,7 +178,8 @@ local function BuildPanel()
         btn:SetHeight(HEADER_H)
         btn:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD+x, -(TITLE_H+2))
         local j = col.align=="CENTER" and "CENTER" or (col.align=="RIGHT" and "RIGHT" or "LEFT")
-        local fs = btn:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+        local fs = btn:CreateFontString(nil, "OVERLAY")
+        fs:SetFont(FONT_PATH, FONT_SIZE)
         fs:SetAllPoints()
         fs:SetJustifyH(j)
         fs:SetText(col.label)
@@ -200,10 +211,12 @@ local function BuildPanel()
     footerSep:SetHeight(1)
     footerSep:SetColorTexture(0.35, 0.35, 0.35, 0.8)
 
-    footerLeft = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    footerLeft = panel:CreateFontString(nil, "OVERLAY")
+    footerLeft:SetFont(FONT_PATH, FONT_SIZE)
     footerLeft:SetJustifyH("LEFT")
 
-    footerRight = panel:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+    footerRight = panel:CreateFontString(nil, "OVERLAY")
+    footerRight:SetFont(FONT_PATH, FONT_SIZE)
     footerRight:SetJustifyH("RIGHT")
 
     panel:Hide()
@@ -265,6 +278,28 @@ function ATA.PanelRefresh()
             nameStr = ATA.ColorName(cn, d.class)
         end
 
+        local lockouts  = d.lockouts or {}
+        local lockCount = #lockouts
+        local lockStr   = lockCount > 0 and ("|cffff4444"..lockCount.."|r") or "|cff888888-|r"
+
+        -- Profession display: show up to 2 icons using texture strings
+        local profStr = ""
+        local profs = d.professions or {}
+        if #profs == 0 then
+            profStr = "|cff888888-|r"
+        else
+            local parts = {}
+            for _, p in ipairs(profs) do
+                local icon = ApeTracksAlts.ProfessionIcons and ApeTracksAlts.ProfessionIcons[p.name]
+                if icon then
+                    parts[#parts+1] = "|T"..icon..":20:20|t"
+                else
+                    parts[#parts+1] = p.name:sub(1,3)
+                end
+            end
+            profStr = table.concat(parts, " ")
+        end
+
         local vals = {
             nameStr,
             tostring(d.level or 0),
@@ -274,6 +309,8 @@ function ATA.PanelRefresh()
             Dash(d.honor),
             Dash(d.arena),
             Dash(d.runes),
+            lockStr,
+            profStr,
             tostring(itemCount),
             FmtSeen(d.lastSeen),
         }
@@ -285,6 +322,46 @@ function ATA.PanelRefresh()
             fs:SetText(vals[i] or "")
             fs:SetAlpha(stale and 0.5 or 1.0)
         end
+
+        -- Store data for hover tooltips
+        row.lockouts    = lockouts
+        row.professions = d.professions or {}
+        row.charName    = cn
+        row.charClass   = d.class
+
+        row:SetScript("OnEnter", function(self)
+            self.hl:Show()
+            local hasLocks = #self.lockouts > 0
+            local hasProfs = #self.professions > 0
+            if not hasLocks and not hasProfs then return end
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(ATA.ColorName(self.charName, self.charClass))
+            if hasLocks then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffffff00Lockouts:|r")
+                for _, lock in ipairs(self.lockouts) do
+                    local remaining = lock.expires - time()
+                    if remaining > 0 then
+                        local h = math.floor(remaining / 3600)
+                        local m = math.floor((remaining % 3600) / 60)
+                        GameTooltip:AddLine(string.format("  %s  %dh %dm", lock.name, h, m), 1, 0.5, 0.5)
+                    end
+                end
+            end
+            if hasProfs then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffffff00Professions:|r")
+                for _, p in ipairs(self.professions) do
+                    GameTooltip:AddLine(string.format("  %s  %d / %d", p.name, p.rank, p.maxRank), 0.8, 0.8, 0.8)
+                end
+            end
+            GameTooltip:Show()
+        end)
+        row:SetScript("OnLeave", function(self)
+            self.hl:Hide()
+            GameTooltip:Hide()
+        end)
 
         totalGold  = totalGold  + (d.gold or 0)
         totalItems = totalItems + itemCount

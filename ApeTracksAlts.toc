@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: ApeTracksAlts
-## Notes: Tracks items, gold, currencies, and alt data across all characters.
+## Notes: Tracks items, gold, currencies, professions, lockouts and alt data.
 ## Author: JamminApe
-## Version: 3.0
+## Version: 4.0
 ## SavedVariables: ApeTracksAltsDB, ApeTracksAltsCfg
 ## LoadOnDemand: 0
 
@@ -11,4 +11,5 @@ Config.lua
 Gold.lua
 Panel.lua
 Minimap.lua
+Wishlist.lua
 Tooltip.lua

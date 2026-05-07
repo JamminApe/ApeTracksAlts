@@ -16,15 +16,17 @@ local defaults = {
         showBank  = true,
         showMail  = true,
     },
-    ignore = {},      -- charName = true for ignored characters
+    ignore   = {},
+    wishlist = {},   -- [realm][charName][itemID] = itemName
     stale = {
-        days = 7,
+        days     = 7,
+        profDays = 30,
     },
     minimap = {
-        angle = 45,   -- degrees around minimap, 0 = top
+        angle = 45,
         hide  = false,
     },
-    loginOpen = true, -- open panel automatically on login
+    loginOpen = true,
 }
 
 local function ApplyDefaults(target, source)

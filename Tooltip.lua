@@ -16,7 +16,6 @@ GameTooltip:HookScript("OnTooltipSetItem", function(tt)
     local itemID  = ATA.GetItemIDFromLink(link)
     if not itemID or not ApeTracksAltsDB[ATA.realm] then return end
 
-    -- Read location toggles and ignore list from config
     local ttCfg    = ApeTracksAltsCfg and ApeTracksAltsCfg.tooltip or {}
     local ignored  = ApeTracksAltsCfg and ApeTracksAltsCfg.ignore  or {}
     local showBags = ttCfg.showBags ~= false
@@ -28,7 +27,6 @@ GameTooltip:HookScript("OnTooltipSetItem", function(tt)
     local realmDB      = ApeTracksAltsDB[ATA.realm]
 
     for charName, data in pairs(realmDB) do
-        -- Skip ignored characters (except current player)
         if not ignored[charName] or charName == ATA.player then
             local item  = data.items and data.items[itemID]
             local inv   = (showBags and item and item.inv) or 0
@@ -50,6 +48,21 @@ GameTooltip:HookScript("OnTooltipSetItem", function(tt)
                     isSelf = isCurrentChar,
                 })
             end
+        end
+    end
+
+    -- Wishlist highlight — shown before the count section
+    local wl = ApeTracksAltsCfg and ApeTracksAltsCfg.wishlist
+    if wl and wl[ATA.realm] then
+        local wantedBy = {}
+        for charName, items in pairs(wl[ATA.realm]) do
+            if items[itemID] then
+                local class = realmDB[charName] and realmDB[charName].class
+                table.insert(wantedBy, ATA.ColorName(charName, class))
+            end
+        end
+        if #wantedBy > 0 then
+            tt:AddLine("|cffffff00* Wanted by: |r" .. table.concat(wantedBy, ", "))
         end
     end
 
