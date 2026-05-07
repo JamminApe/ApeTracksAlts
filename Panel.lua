@@ -360,6 +360,10 @@ end
 
 ATA.OnCoreReady = function()
     BuildPanel()
-    -- Always open the panel on login for an immediate alt overview
-    ApeTracksAlts.PanelShow()
+    -- Open panel on login if loginOpen is enabled (default: true)
+    local loginOpen = ApeTracksAltsCfg and ApeTracksAltsCfg.loginOpen
+    if loginOpen == nil then loginOpen = true end
+    if loginOpen then
+        ApeTracksAlts.PanelShow()
+    end
 end

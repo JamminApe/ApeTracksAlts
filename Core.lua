@@ -2,7 +2,7 @@
 -- Shared DB, utilities, scanning logic, events, and slash commands.
 -- All other modules read from ApeTracksAltsDB and call functions exposed here.
 
-print("|cff00ff00ApeTracksAlts v2.0 loaded|r")
+print("|cff00ff00ApeTracksAlts v3.0 loaded|r")
 
 -------------------------------------------------------------------------------
 -- Saved variable & runtime state
@@ -77,8 +77,9 @@ end
 -- Returns true if the given character data is considered stale (not seen recently).
 function ATA.IsStale(charData)
     if not charData.lastSeen or charData.lastSeen == 0 then return false end
+    local days = (ApeTracksAltsCfg and ApeTracksAltsCfg.stale and ApeTracksAltsCfg.stale.days) or STALE_DAYS
     local daysSince = (time() - charData.lastSeen) / 86400
-    return daysSince >= STALE_DAYS
+    return daysSince >= days
 end
 
 -- Formats a copper value into a "Xg Ys Zc" colored string.
@@ -346,6 +347,174 @@ local function RegisterSlashCommands()
                 end
             end
 
+        elseif msg:sub(1, 4) == "find" then
+            local query = msg:sub(6):match("^%s*(.-)%s*$")
+            if query == "" then
+                print("|cff00ff00ApeTracksAlts|r Usage: /ata find <item name>")
+            else
+                local realmDB = ApeTracksAltsDB[ATA.realm] or {}
+                local results = {}
+                local queryLower = query:lower()
+                -- Collect all unique itemIDs that match the query
+                local matchedIDs = {}
+                for _, data in pairs(realmDB) do
+                    for itemID, counts in pairs(data.items or {}) do
+                        if not matchedIDs[itemID] then
+                            local name = GetItemInfo(itemID)
+                            if name and name:lower():find(queryLower, 1, true) then
+                                matchedIDs[itemID] = name
+                            end
+                        end
+                    end
+                end
+                -- For each matched item, find who has it
+                local found = false
+                for itemID, itemName in pairs(matchedIDs) do
+                    found = true
+                    print(string.format("|cff00ff00ApeTracksAlts|r |cffffff00%s|r (ID: %d)", itemName, itemID))
+                    for charName, data in pairs(realmDB) do
+                        local item = data.items and data.items[itemID]
+                        if item then
+                            local total = item.inv + item.bnk + item.mb
+                            if total > 0 then
+                                local parts = {}
+                                if item.inv > 0 then parts[#parts+1] = "Bags: "..item.inv end
+                                if item.bnk > 0 then parts[#parts+1] = "Bank: "..item.bnk end
+                                if item.mb  > 0 then parts[#parts+1] = "Mail: "..item.mb  end
+                                print(string.format("  %s — %s (Total: %d)",
+                                    ATA.ColorName(charName, data.class),
+                                    table.concat(parts, "  "),
+                                    total))
+                            end
+                        end
+                    end
+                end
+                if not found then
+                    print(string.format("|cff00ff00ApeTracksAlts|r No items matching '%s' found.", query))
+                end
+            end
+
+        elseif msg:sub(1, 6) == "ignore" then
+            local target = msg:sub(8):match("^%s*(.-)%s*$")
+            if target == "" then
+                -- List currently ignored characters with class colors
+                local ignored = ApeTracksAltsCfg.ignore or {}
+                local list = {}
+                local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+                for name in pairs(ignored) do
+                    local class = realmDB2[name] and realmDB2[name].class
+                    table.insert(list, ATA.ColorName(name, class))
+                end
+                if #list == 0 then
+                    print("|cff00ff00ApeTracksAlts|r No characters are being ignored.")
+                else
+                    print("|cff00ff00ApeTracksAlts|r Ignored characters: " .. table.concat(list, ", "))
+                end
+            else
+                if target == ATA.player:lower() then
+                    print("|cff00ff00ApeTracksAlts|r You cannot ignore the currently logged-in character.")
+                else
+                    ApeTracksAltsCfg.ignore = ApeTracksAltsCfg.ignore or {}
+                    -- Case-insensitive match
+                    local realmDB = ApeTracksAltsDB[ATA.realm] or {}
+                    local matched = nil
+                    for charName in pairs(realmDB) do
+                        if charName:lower() == target then matched = charName break end
+                    end
+                    local name = matched or target
+                    ApeTracksAltsCfg.ignore[name] = true
+                    local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+                    local class = realmDB2[name] and realmDB2[name].class
+                    print(string.format("|cff00ff00ApeTracksAlts|r %s is now ignored in tooltips.", ATA.ColorName(name, class)))
+                    ATA.NotifyDataChanged()
+                end
+            end
+
+        elseif msg:sub(1, 8) == "unignore" then
+            local target = msg:sub(10):match("^%s*(.-)%s*$")
+            if target == "" then
+                print("|cff00ff00ApeTracksAlts|r Usage: /ata unignore <name>")
+            else
+                ApeTracksAltsCfg.ignore = ApeTracksAltsCfg.ignore or {}
+                local realmDB = ApeTracksAltsDB[ATA.realm] or {}
+                local matched = nil
+                for charName in pairs(realmDB) do
+                    if charName:lower() == target then matched = charName break end
+                end
+                -- Also try direct match in ignore list
+                if not matched then
+                    for name in pairs(ApeTracksAltsCfg.ignore) do
+                        if name:lower() == target then matched = name break end
+                    end
+                end
+                if matched then
+                    ApeTracksAltsCfg.ignore[matched] = nil
+                    local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+                    local class = realmDB2[matched] and realmDB2[matched].class
+                    print(string.format("|cff00ff00ApeTracksAlts|r %s removed from ignore list.", ATA.ColorName(matched, class)))
+                    ATA.NotifyDataChanged()
+                else
+                    print(string.format("|cff00ff00ApeTracksAlts|r '%s' not found in ignore list.", target))
+                end
+            end
+
+        elseif msg:sub(1, 6) == "toggle" then
+            local what = msg:sub(8):match("^%s*(.-)%s*$")
+            -- Ensure tooltip table exists
+            ApeTracksAltsCfg.tooltip = ApeTracksAltsCfg.tooltip or { showBags=true, showBank=true, showMail=true }
+            local ttCfg = ApeTracksAltsCfg.tooltip
+            if what == "bags" then
+                ttCfg.showBags = not (ttCfg.showBags ~= false)
+                print("|cff00ff00ApeTracksAlts|r Bags in tooltip: " .. (ttCfg.showBags and "|cff00ff00on|r" or "|cffff4444off|r"))
+            elseif what == "bank" then
+                ttCfg.showBank = not (ttCfg.showBank ~= false)
+                print("|cff00ff00ApeTracksAlts|r Bank in tooltip: " .. (ttCfg.showBank and "|cff00ff00on|r" or "|cffff4444off|r"))
+            elseif what == "mail" then
+                ttCfg.showMail = not (ttCfg.showMail ~= false)
+                print("|cff00ff00ApeTracksAlts|r Mail in tooltip: " .. (ttCfg.showMail and "|cff00ff00on|r" or "|cffff4444off|r"))
+            elseif what == "login" then
+                ApeTracksAltsCfg.loginOpen = not (ApeTracksAltsCfg.loginOpen ~= false)
+                print("|cff00ff00ApeTracksAlts|r Panel on login: " .. (ApeTracksAltsCfg.loginOpen and "|cff00ff00on|r" or "|cffff4444off|r"))
+            else
+                if ApeTracksAlts.PanelToggle then ApeTracksAlts.PanelToggle() end
+            end
+
+        elseif msg:sub(1, 3) == "set" then
+            local args = msg:sub(5):match("^%s*(.-)%s*$")
+            local key, val = args:match("^(%S+)%s+(.+)$")
+            if key == "stale" then
+                local days = tonumber(val)
+                if days and days >= 0 then
+                    ApeTracksAltsCfg.stale = ApeTracksAltsCfg.stale or {}
+                    ApeTracksAltsCfg.stale.days = days
+                    print(string.format("|cff00ff00ApeTracksAlts|r Stale threshold set to %d days.", days))
+                else
+                    print("|cff00ff00ApeTracksAlts|r Usage: /ata set stale <days>")
+                end
+            else
+                print("|cff00ff00ApeTracksAlts|r Unknown setting. Available: stale")
+            end
+
+        elseif msg == "config" then
+            ApeTracksAltsCfg.tooltip = ApeTracksAltsCfg.tooltip or { showBags=true, showBank=true, showMail=true }
+            ApeTracksAltsCfg.stale   = ApeTracksAltsCfg.stale   or { days=7 }
+            local ttCfg    = ApeTracksAltsCfg.tooltip
+            local ignored  = ApeTracksAltsCfg.ignore or {}
+            local ignoreList = {}
+            for charName, _ in pairs(ignored) do
+                local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+                local class = realmDB2[charName] and realmDB2[charName].class
+                table.insert(ignoreList, ATA.ColorName(charName, class))
+            end
+            local function onoff(v) return (v ~= false) and "|cff00ff00on|r" or "|cffff4444off|r" end
+            print("|cff00ff00ApeTracksAlts|r Current Settings:")
+            print(string.format("  Stale threshold  : %d days  (/ata set stale <days>)", ApeTracksAltsCfg.stale.days or 7))
+            print(string.format("  Panel on login   : %s  (/ata toggle login)", onoff(ApeTracksAltsCfg.loginOpen)))
+            print(string.format("  Tooltip bags     : %s  (/ata toggle bags)",  onoff(ttCfg.showBags)))
+            print(string.format("  Tooltip bank     : %s  (/ata toggle bank)",  onoff(ttCfg.showBank)))
+            print(string.format("  Tooltip mail     : %s  (/ata toggle mail)",  onoff(ttCfg.showMail)))
+            print(string.format("  Ignored chars    : %s", #ignoreList > 0 and table.concat(ignoreList, ", ") or "none"))
+
         elseif msg == "reset" then
             ApeTracksAltsDB = {}
             ATA.EnsureDB()
@@ -356,16 +525,45 @@ local function RegisterSlashCommands()
             ScanBags()
             print("|cff00ff00ApeTracksAlts|r Database reset. Current character re-seeded.")
 
+        elseif msg == "minimap" then
+            if ATA.MinimapShow and ATA.MinimapHide then
+                local btn = ATAMinimapButton
+                if btn and btn:IsShown() then
+                    ATA.MinimapHide()
+                    print("|cff00ff00ApeTracksAlts|r Minimap button hidden. /ata minimap to restore.")
+                else
+                    ATA.MinimapShow()
+                    print("|cff00ff00ApeTracksAlts|r Minimap button shown.")
+                end
+            else
+                print("|cffff4444ApeTracksAlts|r Minimap module not loaded.")
+            end
+
         else
             print("|cff00ff00ApeTracksAlts|r Commands:")
-            print("  /ata show             — Open the character panel")
-            print("  /ata hide             — Close the character panel")
-            print("  /ata toggle           — Toggle the character panel")
-            print("  /ata list             — All tracked characters")
-            print("  /ata gold             — Gold summary across all alts")
-            print("  /ata purge <name>     — Remove a single character from the database")
-            print("  /ata debug            — DB stats")
-            print("  /ata reset            — Wipe the entire database")
+            print("  |cffffff00Panel:|r")
+            print("    /ata show                — Open the character panel")
+            print("    /ata hide                — Close the character panel")
+            print("    /ata toggle              — Toggle the character panel")
+            print("    /ata minimap             — Toggle the minimap button")
+            print("  |cffffff00Database:|r")
+            print("    /ata list                — All tracked characters")
+            print("    /ata gold                — Gold summary across all alts")
+            print("    /ata find <item>         — Search for an item across all alts")
+            print("    /ata purge <name>        — Remove a character from the database")
+            print("    /ata reset               — Wipe the entire database")
+            print("  |cffffff00Settings:|r")
+            print("    /ata config              — Show all current settings")
+            print("    /ata set stale <days>    — Set stale threshold (default: 7)")
+            print("    /ata toggle login        — Toggle panel auto-open on login")
+            print("    /ata toggle bags         — Toggle bags in tooltips")
+            print("    /ata toggle bank         — Toggle bank in tooltips")
+            print("    /ata toggle mail         — Toggle mail in tooltips")
+            print("    /ata ignore <name>       — Hide a character from tooltips")
+            print("    /ata ignore              — List ignored characters")
+            print("    /ata unignore <name>     — Remove from ignore list")
+            print("  |cffffff00Other:|r")
+            print("    /ata debug               — DB stats")
         end
     end
 end
@@ -477,11 +675,12 @@ frame:SetScript("OnEvent", function(_, event)
         if ATA.realm then ScheduleMailScan() end
 
     elseif event == "MAIL_CLOSED" then
+        -- Cancel any pending scan but keep mb counts intact.
+        -- Mail data remains valid until the next time the mailbox is opened.
         if mailScanTimer then
             mailScanTimer:Cancel()
             mailScanTimer = nil
         end
-        ClearMailCounts()
 
     elseif event == "PLAYER_MONEY" then
         if ATA.realm then

@@ -2,11 +2,13 @@
 ## Title: ApeTracksAlts
 ## Notes: Tracks items, gold, currencies, and alt data across all characters.
 ## Author: JamminApe
-## Version: 2.0
+## Version: 3.0
 ## SavedVariables: ApeTracksAltsDB, ApeTracksAltsCfg
+## LoadOnDemand: 0
 
 Core.lua
 Config.lua
 Gold.lua
 Panel.lua
+Minimap.lua
 Tooltip.lua

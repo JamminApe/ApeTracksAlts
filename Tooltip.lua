@@ -1,7 +1,6 @@
 -- ApeTracksAlts | Tooltip.lua
--- Hooks GameTooltip to display per-character item counts (bags/bank/mail)
--- for every item across all tracked alts on the current realm.
--- Loaded last so it can safely reference ATA helpers from Core.lua.
+-- Hooks GameTooltip to display per-character item counts.
+-- Respects ignore list and per-location toggle settings.
 
 local ATA = ApeTracksAlts
 
@@ -17,36 +16,45 @@ GameTooltip:HookScript("OnTooltipSetItem", function(tt)
     local itemID  = ATA.GetItemIDFromLink(link)
     if not itemID or not ApeTracksAltsDB[ATA.realm] then return end
 
+    -- Read location toggles and ignore list from config
+    local ttCfg    = ApeTracksAltsCfg and ApeTracksAltsCfg.tooltip or {}
+    local ignored  = ApeTracksAltsCfg and ApeTracksAltsCfg.ignore  or {}
+    local showBags = ttCfg.showBags ~= false
+    local showBank = ttCfg.showBank ~= false
+    local showMail = ttCfg.showMail ~= false
+
     local list         = {}
     local accountTotal = 0
     local realmDB      = ApeTracksAltsDB[ATA.realm]
 
     for charName, data in pairs(realmDB) do
-        local item  = data.items and data.items[itemID]
-        local inv   = item and item.inv or 0
-        local bnk   = item and item.bnk or 0
-        local mb    = item and item.mb  or 0
-        local total = inv + bnk + mb
+        -- Skip ignored characters (except current player)
+        if not ignored[charName] or charName == ATA.player then
+            local item  = data.items and data.items[itemID]
+            local inv   = (showBags and item and item.inv) or 0
+            local bnk   = (showBank and item and item.bnk) or 0
+            local mb    = (showMail and item and item.mb)  or 0
+            local total = inv + bnk + mb
 
-        local isCurrentChar = (charName == ATA.player)
-        if total > 0 or isCurrentChar then
-            accountTotal = accountTotal + total
-            table.insert(list, {
-                name   = charName,
-                class  = data.class,
-                inv    = inv,
-                bnk    = bnk,
-                mb     = mb,
-                total  = total,
-                stale  = ATA.IsStale(data),
-                isSelf = isCurrentChar,
-            })
+            local isCurrentChar = (charName == ATA.player)
+            if total > 0 or isCurrentChar then
+                accountTotal = accountTotal + total
+                table.insert(list, {
+                    name   = charName,
+                    class  = data.class,
+                    inv    = inv,
+                    bnk    = bnk,
+                    mb     = mb,
+                    total  = total,
+                    stale  = ATA.IsStale(data),
+                    isSelf = isCurrentChar,
+                })
+            end
         end
     end
 
     if #list == 0 then return end
 
-    -- Sort: current char first, then by count desc, stale to bottom
     table.sort(list, function(a, b)
         if a.isSelf ~= b.isSelf then return a.isSelf end
         if a.stale  ~= b.stale  then return not a.stale end
@@ -58,17 +66,11 @@ GameTooltip:HookScript("OnTooltipSetItem", function(tt)
 
     for _, e in ipairs(list) do
         local staleTag = e.stale and " |cffff4444[stale]|r" or ""
-
-        -- Build a compact inline label string: only show non-zero buckets,
-        -- always show Total. Color codes in AddDoubleLine right-side break
-        -- column alignment, so we use a single AddLine with inline labels.
         local parts = {}
         if e.inv > 0 then parts[#parts+1] = string.format("|cffaaaaaa Bags:|r %d", e.inv) end
         if e.bnk > 0 then parts[#parts+1] = string.format("|cffaaaaaa Bank:|r %d", e.bnk) end
         if e.mb  > 0 then parts[#parts+1] = string.format("|cffaaaaaa Mail:|r %d", e.mb)  end
 
-        -- Name left, counts right via AddDoubleLine using plain numbers only
-        -- on the right side so spacing is predictable
         local rightStr
         if #parts > 0 then
             rightStr = table.concat(parts, "  ") ..
