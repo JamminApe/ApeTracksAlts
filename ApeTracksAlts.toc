@@ -1,6 +1,6 @@
 ## Interface: 30300
 ## Title: ApeTracksAlts
-## Notes: Tracks items, gold, and alt data
+## Notes: Tracks items, gold, currencies, and alt data across all characters.
 ## Author: JamminApe
 ## Version: 2.0
 ## SavedVariables: ApeTracksAltsDB, ApeTracksAltsCfg

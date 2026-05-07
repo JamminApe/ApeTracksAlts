@@ -36,6 +36,9 @@ ApplyDefaults(ApeTracksAltsCfg, defaults)
 -- Add config to the existing ApeTracksAlts namespace created by Core.lua
 if ApeTracksAlts then
     ApeTracksAlts.cfg = ApeTracksAltsCfg
+    local p = ApeTracksAltsCfg.panel
+    print(string.format("|cff00ff00ApeTracksAlts|r Config loaded — panel x=%s y=%s visible=%s",
+        tostring(p.x), tostring(p.y), tostring(p.visible)))
 else
     print("|cffff4444ApeTracksAlts|r Config.lua: ApeTracksAlts global not found!")
 end

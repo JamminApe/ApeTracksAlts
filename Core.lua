@@ -29,6 +29,7 @@ function ATA.EnsureDB()
     ApeTracksAltsDB[ATA.realm]             = ApeTracksAltsDB[ATA.realm] or {}
     ApeTracksAltsDB[ATA.realm][ATA.player] = ApeTracksAltsDB[ATA.realm][ATA.player] or {
         class    = select(2, UnitClass("player")),
+        race     = UnitRace("player"),
         level    = UnitLevel("player"),
         gold     = 0,
         ilvl     = 0,
@@ -44,6 +45,7 @@ function ATA.EnsureDB()
     if d.honor == nil then d.honor = 0 end
     if d.arena == nil then d.arena = 0 end
     if d.runes == nil then d.runes = 0 end
+    if d.race  == nil then d.race  = UnitRace("player") end
 end
 
 function ATA.GetCharData()
@@ -133,9 +135,24 @@ local function ScanCurrencies()
         end
     end
 
-    -- Average equipped item level from the character sheet
-    local _, equipped = GetAverageItemLevel()
-    charData.ilvl = math.floor(equipped or 0)
+    -- Average equipped item level from character sheet
+    -- GetAverageItemLevel returns: overall, equipped
+    -- On Ascension the equipped value matches the character sheet
+    local ilvl = 0
+    if GetAverageItemLevel then
+        local overall, equipped = GetAverageItemLevel()
+        -- Use whichever is non-zero and smaller (equipped is usually lower)
+        local v1 = tonumber(overall) or 0
+        local v2 = tonumber(equipped) or 0
+        -- Pick the one that matches character sheet (non-zero, take the decimal)
+        if v2 > 0 then
+            ilvl = v2
+        elseif v1 > 0 then
+            ilvl = v1
+        end
+    end
+    -- Store with one decimal place so 34.13 shows as 34.1
+    charData.ilvl = math.floor((ilvl * 10) + 0.5) / 10
 end
 
 -- Called by any module that wants to react to data changes (e.g. Panel refresh).
@@ -305,6 +322,30 @@ local function RegisterSlashCommands()
             end
             print("  |cffffff00Account Total: " .. ATA.FormatGold(total) .. "|r")
 
+        elseif msg:sub(1, 5) == "purge" then
+            local target = msg:sub(7):match("^%s*(.-)%s*$")
+            if target == "" then
+                print("|cff00ff00ApeTracksAlts|r Usage: /ata purge CharacterName")
+            else
+                local realmDB = ApeTracksAltsDB[ATA.realm] or {}
+                local matched = nil
+                for charName in pairs(realmDB) do
+                    if charName:lower() == target:lower() then
+                        matched = charName
+                        break
+                    end
+                end
+                if not matched then
+                    print(string.format("|cff00ff00ApeTracksAlts|r No character named '%s' found on %s.", target, ATA.realm))
+                elseif matched == ATA.player then
+                    print("|cff00ff00ApeTracksAlts|r You cannot purge the currently logged-in character.")
+                else
+                    ApeTracksAltsDB[ATA.realm][matched] = nil
+                    print(string.format("|cff00ff00ApeTracksAlts|r Purged |cffffffff%s|r from the database.", matched))
+                    ATA.NotifyDataChanged()
+                end
+            end
+
         elseif msg == "reset" then
             ApeTracksAltsDB = {}
             ATA.EnsureDB()
@@ -317,13 +358,14 @@ local function RegisterSlashCommands()
 
         else
             print("|cff00ff00ApeTracksAlts|r Commands:")
-            print("  /ata show   — Open the character panel")
-            print("  /ata hide   — Close the character panel")
-            print("  /ata toggle — Toggle the character panel")
-            print("  /ata list   — All tracked characters")
-            print("  /ata gold   — Gold summary across all alts")
-            print("  /ata debug  — DB stats")
-            print("  /ata reset  — Wipe the database")
+            print("  /ata show             — Open the character panel")
+            print("  /ata hide             — Close the character panel")
+            print("  /ata toggle           — Toggle the character panel")
+            print("  /ata list             — All tracked characters")
+            print("  /ata gold             — Gold summary across all alts")
+            print("  /ata purge <name>     — Remove a single character from the database")
+            print("  /ata debug            — DB stats")
+            print("  /ata reset            — Wipe the entire database")
         end
     end
 end
@@ -454,14 +496,18 @@ frame:SetScript("OnEvent", function(_, event)
         end
 
     elseif event == "PLAYER_EQUIPMENT_CHANGED" then
-        -- Rescan ilvl when gear changes
         if ATA.realm then
             C_Timer.After(0.5, function()
-                if ATA.realm then
-                    local _, equipped = GetAverageItemLevel()
-                    ATA.GetCharData().ilvl = math.floor(equipped or 0)
-                    ATA.NotifyDataChanged()
+                if not ATA.realm then return end
+                local ilvl = 0
+                if GetAverageItemLevel then
+                    local overall, equipped = GetAverageItemLevel()
+                    local v1 = tonumber(overall) or 0
+                    local v2 = tonumber(equipped) or 0
+                    ilvl = v2 > 0 and v2 or v1
                 end
+                ATA.GetCharData().ilvl = math.floor((ilvl * 10) + 0.5) / 10
+                ATA.NotifyDataChanged()
             end)
         end
 
