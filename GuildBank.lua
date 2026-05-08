@@ -55,8 +55,14 @@ local function ScanGuildBank()
     if not IsRegisteredForChar(guildName) then return false end
 
     local db = EnsureGuildDB(guildName)
-    for k in pairs(db) do db[k] = nil end
+    -- Do NOT clear existing data before scanning.
+    -- WoW only loads tab data when physically clicked, so we accumulate
+    -- results across multiple bank opens rather than wiping on each scan.
+    -- This means previously seen tabs persist even if not re-clicked.
+    local prevTotal = 0
+    for _ in pairs(db) do prevTotal = prevTotal + 1 end
 
+    local newItems = 0
     local numTabs = GetNumGuildBankTabs()
     for tab = 1, numTabs do
         local _, _, isViewable = GetGuildBankTabInfo(tab)
@@ -67,7 +73,8 @@ local function ScanGuildBank()
                     local itemID = ATA.GetItemIDFromLink(link)
                     if itemID then
                         local _, count = GetGuildBankItemInfo(tab, slot)
-                        db[itemID] = (db[itemID] or 0) + (count or 1)
+                        if not db[itemID] then newItems = newItems + 1 end
+                        db[itemID] = (count or 1)
                     end
                 end
             end
@@ -75,7 +82,7 @@ local function ScanGuildBank()
     end
 
     ATA.NotifyDataChanged()
-    return true, guildName
+    return true, guildName, newItems
 end
 
 function ATA.GetGuildBankCount(itemID)
@@ -237,12 +244,12 @@ gbFrame:SetScript("OnEvent", function(_, event)
         if IsRegisteredForChar(guildName) then
             C_Timer.After(1, function()
                 if ATAGuildBankOpen then
-                    local ok, name = ScanGuildBank()
+                    local ok, name, newItems = ScanGuildBank()
                     if ok then
                         local total = 0
                         local db = ApeTracksAltsDB.guildBanks[ATA.realm][name] or {}
                         for _ in pairs(db) do total = total + 1 end
-                        print(string.format("|cff00ff00ApeTracksAlts|r Guild bank scanned: |cff00cccc%s|r (%d items). Click tabs to scan more.",
+                        print(string.format("|cff00ff00ApeTracksAlts|r |cff00cccc%s|r scanned — %d unique items. Click remaining tabs to update.",
                             name, total))
                     end
                 end
@@ -253,9 +260,16 @@ gbFrame:SetScript("OnEvent", function(_, event)
         ATAGuildBankOpen = false
 
     elseif event == "GUILDBANKBAGSLOTS_CHANGED" then
+        -- Fires when tab data loads or items change — rescan after short delay
         if ATAGuildBankOpen and ATA.realm then
             C_Timer.After(0.5, function()
-                if ATAGuildBankOpen then ScanGuildBank() end
+                if ATAGuildBankOpen then
+                    local ok, name, newItems = ScanGuildBank()
+                    if ok and newItems and newItems > 0 then
+                        print(string.format("|cff00ff00ApeTracksAlts|r |cff00cccc%s|r updated — %d new items found.",
+                            name, newItems))
+                    end
+                end
             end)
         end
     end

@@ -108,7 +108,7 @@ GameTooltip:HookScript("OnTooltipSetItem", function(tt)
         local leftStr
 
         if e.isGuild then
-            leftStr = "|cff00cccc Guild Bank|r |cff00aaaa(" .. e.name .. ")|r"
+            leftStr = "|cff00ccccGuild Bank|r |cff00aaaa(" .. e.name .. ")|r"
         else
             leftStr = ATA.ColorName(e.name, e.class) .. staleTag
         end

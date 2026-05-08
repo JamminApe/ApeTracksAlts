@@ -163,9 +163,22 @@ end
 
 -- Called by any module that wants to react to data changes (e.g. Panel refresh).
 -- Modules assign a function to ATA.OnDataChanged to hook in.
+-- Debounce timer for panel refresh.
+local _notifyTimer = nil
 function ATA.NotifyDataChanged()
-    if ATA.OnDataChanged then ATA.OnDataChanged() end
+    if _notifyTimer then
+        _notifyTimer:Cancel()
+        _notifyTimer = nil
+    end
+    _notifyTimer = C_Timer.NewTimer(0.5, function()
+        _notifyTimer = nil
+        if ATA.OnDataChanged then ATA.OnDataChanged() end
+    end)
 end
+
+-- Suppress panel refresh while Questie is doing its DB update.
+-- Set to true while Questie is compiling, false when done.
+ATA.questieBusy = false
 
 -------------------------------------------------------------------------------
 -- Scanning
@@ -347,43 +360,7 @@ local function RegisterSlashCommands()
 
         local realmDB = ApeTracksAltsDB[ATA.realm] or {}
 
-        if msg == "show" then
-            print("|cff00ff00ApeTracksAlts|r /ata show — PanelShow = " .. tostring(ApeTracksAlts.PanelShow))
-            if ApeTracksAlts.PanelShow then
-                ApeTracksAlts.PanelShow()
-            else
-                print("|cffff4444ApeTracksAlts|r Panel.lua did not load correctly — PanelShow is nil")
-            end
-
-        elseif msg == "hide" then
-            if ApeTracksAlts.PanelHide then ApeTracksAlts.PanelHide() end
-
-        elseif msg == "toggle" then
-            if ApeTracksAlts.PanelToggle then ApeTracksAlts.PanelToggle() end
-
-        elseif msg == "panel" then
-            -- Debug: print frame state and force it visible at center
-            local f = ATAPanel
-            if not f then
-                print("|cffff4444ApeTracksAlts|r ATAPanel frame does not exist!")
-            else
-                print(string.format("|cff00ff00ApeTracksAlts|r Panel debug:"))
-                print(string.format("  Shown: %s", tostring(f:IsShown())))
-                print(string.format("  Visible: %s", tostring(f:IsVisible())))
-                print(string.format("  Size: %.0f x %.0f", f:GetWidth(), f:GetHeight()))
-                print(string.format("  Alpha: %.2f", f:GetAlpha()))
-                local l, t = f:GetLeft(), f:GetTop()
-                print(string.format("  Position: left=%.0f top=%.0f", l or -1, t or -1))
-                -- Force it to center and show
-                f:ClearAllPoints()
-                f:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
-                f:SetAlpha(1)
-                f:Show()
-                if ApeTracksAlts.PanelRefresh then ApeTracksAlts.PanelRefresh() end
-                print("  Forced to center and shown.")
-            end
-
-        elseif msg == "debug" then
+        if msg == "debug" then
             local charCount, itemCount = 0, 0
             for _, c in pairs(realmDB) do
                 charCount = charCount + 1
@@ -395,35 +372,37 @@ local function RegisterSlashCommands()
             ))
 
         elseif msg == "list" then
-            print("|cff00ff00ApeTracksAlts|r — Characters on " .. ATA.realm .. ":")
+            ATA.Output(" ")
+            ATA.Output("|cff00ff00ApeTracksAlts|r — Characters on " .. ATA.realm .. ":")
             for charName, data in pairs(realmDB) do
                 local itemCount = 0
                 for _ in pairs(data.items) do itemCount = itemCount + 1 end
                 local staleTag = ATA.IsStale(data) and " |cffff4444[stale]|r" or ""
-                print(string.format("  %s (Lvl %d %s | iLvl %d) — %d items  %s%s",
+                ATA.Output(string.format("  %s (Lvl %d %s | iLvl %d) — %d items  %s%s",
                     ATA.ColorName(charName, data.class),
                     data.level or 0,
                     data.class or "?",
                     data.ilvl  or 0,
                     itemCount,
                     ATA.FormatGold(data.gold),
-                    staleTag
-                ))
+                    staleTag))
             end
+            ATA.OutputFlush()
 
         elseif msg == "gold" then
             local total = 0
-            print("|cff00ff00ApeTracksAlts|r — Gold on " .. ATA.realm .. ":")
+            ATA.Output(" ")
+            ATA.Output("|cff00ff00ApeTracksAlts|r — Gold on " .. ATA.realm .. ":")
             for charName, data in pairs(realmDB) do
                 local staleTag = ATA.IsStale(data) and " |cffff4444[stale]|r" or ""
-                print(string.format("  %s: %s%s",
+                ATA.Output(string.format("  %s: %s%s",
                     ATA.ColorName(charName, data.class),
                     ATA.FormatGold(data.gold),
-                    staleTag
-                ))
+                    staleTag))
                 total = total + (data.gold or 0)
             end
-            print("  |cffffff00Account Total: " .. ATA.FormatGold(total) .. "|r")
+            ATA.Output("  |cffffff00Account Total: " .. ATA.FormatGold(total) .. "|r")
+            ATA.OutputFlush()
 
         elseif msg:sub(1, 5) == "purge" then
             local target = msg:sub(7):match("^%s*(.-)%s*$")
@@ -452,8 +431,13 @@ local function RegisterSlashCommands()
         elseif msg:sub(1, 4) == "find" then
             local query = msg:sub(6):match("^%s*(.-)%s*$")
             if query == "" then
-                print("|cff00ff00ApeTracksAlts|r Usage: /ata find <item name>")
+                print("|cff00ff00ApeTracksAlts|r Usage: /ata find <item name or shift-click item>")
             else
+                -- If a shift-clicked item link was pasted, extract just the name
+                -- Links look like: |cff...|Hitem:...|h[Item Name]|h|r
+                local linkName = query:match("%[(.-)%]")
+                if linkName then query = linkName end
+
                 local realmDB    = ApeTracksAltsDB[ATA.realm] or {}
                 local queryLower = query:lower()
                 local matchedIDs = {}
@@ -493,10 +477,13 @@ local function RegisterSlashCommands()
                 end
 
                 local found = false
+                ATA.Output(" ")
+                ATA.Output(string.format("|cff00ff00ApeTracksAlts|r — Find results: |cffffff00%s|r", query))
+                ATA.Output(" ")
                 for itemID, itemName in pairs(matchedIDs) do
                     found = true
-                    print(string.format("|cff00ff00ApeTracksAlts|r |cffffff00%s|r (ID: %d)", itemName, itemID))
-                    -- Character results
+                    local link = GetItemLink(itemID) or ("|cffffff00"..itemName.."|r")
+                    ATA.Output(link)                    -- Character results
                     for charName, data in pairs(realmDB) do
                         local item = data.items and data.items[itemID]
                         if item then
@@ -506,7 +493,7 @@ local function RegisterSlashCommands()
                                 if item.inv > 0 then parts[#parts+1] = "Bags: "..item.inv end
                                 if item.bnk > 0 then parts[#parts+1] = "Bank: "..item.bnk end
                                 if item.mb  > 0 then parts[#parts+1] = "Mail: "..item.mb  end
-                                print(string.format("  %s — %s (Total: %d)",
+                                ATA.Output(string.format("  %s — %s (Total: %d)",
                                     ATA.ColorName(charName, data.class),
                                     table.concat(parts, "  "), total))
                             end
@@ -518,14 +505,15 @@ local function RegisterSlashCommands()
                                    ApeTracksAltsDB.guildBanks[ATA.realm] and
                                    ApeTracksAltsDB.guildBanks[ATA.realm][guildName]
                         if db and db[itemID] and db[itemID] > 0 then
-                            print(string.format("  |cff00cccc Guild Bank|r |cff00aaaa(%s)|r — Items: %d",
+                            ATA.Output(string.format("  |cff00ccccGuild Bank|r |cff00aaaa(%s)|r — Items: %d",
                                 guildName, db[itemID]))
                         end
                     end
                 end
                 if not found then
-                    print(string.format("|cff00ff00ApeTracksAlts|r No items matching '%s' found.", query))
+                    ATA.Output(string.format("|cff888888No items matching '%s' found.|r", query))
                 end
+                ATA.OutputFlush()
             end
 
         elseif msg:sub(1, 6) == "ignore" then
@@ -641,40 +629,7 @@ local function RegisterSlashCommands()
             end
 
         elseif msg == "config" then
-            ApeTracksAltsCfg.tooltip = ApeTracksAltsCfg.tooltip or { showBags=true, showBank=true, showMail=true }
-            ApeTracksAltsCfg.stale   = ApeTracksAltsCfg.stale   or { days=7 }
-            local ttCfg    = ApeTracksAltsCfg.tooltip
-            local ignored  = ApeTracksAltsCfg.ignore or {}
-            local ignoreList = {}
-            for charName, _ in pairs(ignored) do
-                local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
-                local class = realmDB2[charName] and realmDB2[charName].class
-                table.insert(ignoreList, ATA.ColorName(charName, class))
-            end
-            local function onoff(v) return (v ~= false) and "|cff00ff00on|r" or "|cffff4444off|r" end
-            -- Guild banks registered for this character
-            local myGuilds = ApeTracksAltsCfg.guild and ApeTracksAltsCfg.guild.chars
-            local guildList = {}
-            if myGuilds and myGuilds[ATA.realm] and myGuilds[ATA.realm][ATA.player] then
-                for guildName in pairs(myGuilds[ATA.realm][ATA.player]) do
-                    table.insert(guildList, guildName)
-                end
-            end
-            local guildDisplay = {}
-            for _, g in ipairs(guildList) do
-                table.insert(guildDisplay, "|cff00cccc" .. g .. "|r")
-            end
-            local guildStr = #guildDisplay > 0 and table.concat(guildDisplay, ", ") or "|cff888888NA — run /ata guild add at your guild bank|r"
-            print("|cff00ff00ApeTracksAlts|r Current Settings:")
-            print(string.format("  Stale threshold  : %d days  (/ata set stale <days>)", ApeTracksAltsCfg.stale.days or 7))
-            print(string.format("  Prof stale       : %d days  (/ata set profstale <days>)", ApeTracksAltsCfg.stale.profDays or 30))
-            print(string.format("  Panel on login   : %s  (/ata toggle login)", onoff(ApeTracksAltsCfg.loginOpen)))
-            print(string.format("  Tooltip bags     : %s  (/ata toggle bags)",  onoff(ttCfg.showBags)))
-            print(string.format("  Tooltip bank     : %s  (/ata toggle bank)",  onoff(ttCfg.showBank)))
-            print(string.format("  Tooltip mail     : %s  (/ata toggle mail)",  onoff(ttCfg.showMail)))
-            print(string.format("  Ignored chars    : %s", #ignoreList > 0 and table.concat(ignoreList, ", ") or "none"))
-            print(string.format("  Guild banks      : %s", guildStr))
-            print(string.format("  Guild auto-reg   : %s", onoff(autoReg)))
+            if ATA.ShowTab then ATA.ShowTab("Config") end
 
         elseif msg == "reset" then
             ApeTracksAltsDB = {}
@@ -710,17 +665,18 @@ local function RegisterSlashCommands()
                 return notes[charName]
             end
 
-            local function PrintNotes(charName)
+            local function PrintNotes(charName, useOutput)
                 local class = realmDB2[charName] and realmDB2[charName].class
                 local n = GetNotes(charName)
+                local out = useOutput and ATA.Output or print
                 if #n == 0 then
-                    print(string.format("|cff00ff00ApeTracksAlts|r %s has no notes.",
+                    out(string.format("|cff00ff00ApeTracksAlts|r %s has no notes.",
                         ATA.ColorName(charName, class)))
                 else
-                    print(string.format("|cff00ff00ApeTracksAlts|r %s's notes:",
+                    out(string.format("|cff00ff00ApeTracksAlts|r %s's notes:",
                         ATA.ColorName(charName, class)))
                     for i, text in ipairs(n) do
-                        print(string.format("  |cffffff00[%d]|r %s", i, text))
+                        out(string.format("  |cffffff00[%d]|r %s", i, text))
                     end
                 end
             end
@@ -730,21 +686,22 @@ local function RegisterSlashCommands()
                 for charName, n in pairs(notes) do
                     local list = type(n) == "table" and n or { n }
                     if #list > 0 then
-                        PrintNotes(charName)
+                        PrintNotes(charName, true)  -- true = use Output window
                         any = true
                     end
                 end
-                if not any then print("|cff00ff00ApeTracksAlts|r No notes found.") end
+                if not any then ATA.Output("|cff00ff00ApeTracksAlts|r No notes found.") end
+                ATA.OutputFlush()
 
             elseif args:sub(1, 5) == "clear" then
                 local rest = args:sub(6):match("^%s*(.-)%s*$")
                 -- /ata note clear [number] or /ata note clear [CharName] [number] or /ata note clear all
                 if rest == "all" then
-                    notes[ATA.player] = {}
+                    notes[ATA.player] = nil
                     local class = realmDB2[ATA.player] and realmDB2[ATA.player].class
                     print(string.format("|cff00ff00ApeTracksAlts|r All notes cleared for %s.",
                         ATA.ColorName(ATA.player, class)))
-                    ATA.NotifyDataChanged()
+                    if ATA.UpdateNotesOnly then ATA.UpdateNotesOnly() end
                 else
                     -- Check if first token is a character name
                     local firstWord = rest:match("^(%S+)")
@@ -773,21 +730,20 @@ local function RegisterSlashCommands()
                         local class = realmDB2[targetChar] and realmDB2[targetChar].class
                         print(string.format("|cff00ff00ApeTracksAlts|r Removed note [%d] from %s: %s",
                             num, ATA.ColorName(targetChar, class), removed))
-                        -- Show updated list so player can see renumbering
                         if #n > 0 then
                             PrintNotes(targetChar)
                         else
+                            notes[targetChar] = nil
                             print(string.format("|cff00ff00ApeTracksAlts|r %s now has no notes.",
                                 ATA.ColorName(targetChar, class)))
                         end
-                        ATA.NotifyDataChanged()
+                        if ATA.UpdateNotesOnly then ATA.UpdateNotesOnly() end
                     elseif numStr == "" then
-                        -- /ata note clear with no number — clear all for current char
-                        notes[targetChar] = {}
+                        notes[targetChar] = nil
                         local class = realmDB2[targetChar] and realmDB2[targetChar].class
                         print(string.format("|cff00ff00ApeTracksAlts|r All notes cleared for %s.",
                             ATA.ColorName(targetChar, class)))
-                        ATA.NotifyDataChanged()
+                        if ATA.UpdateNotesOnly then ATA.UpdateNotesOnly() end
                     else
                         print(string.format("|cff00ff00ApeTracksAlts|r Invalid note number '%s'. Use /ata note list to see numbers.", numStr))
                     end
@@ -838,7 +794,7 @@ local function RegisterSlashCommands()
                         local class = realmDB2[targetChar] and realmDB2[targetChar].class
                         print(string.format("|cff00ff00ApeTracksAlts|r Note [%d] added for %s: %s",
                             #n, ATA.ColorName(targetChar, class), noteText))
-                        ATA.NotifyDataChanged()
+                        if ATA.UpdateNotesOnly then ATA.UpdateNotesOnly() end
                     end
                 end
             end
@@ -853,25 +809,28 @@ local function RegisterSlashCommands()
 
         elseif msg == "locks" then
             local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
-            print("|cff00ff00ApeTracksAlts|r — Lockouts on " .. ATA.realm .. ":")
+            ATA.Output(" ")
+            ATA.Output("|cff00ff00ApeTracksAlts|r — Lockouts on " .. ATA.realm .. ":")
             for charName, data in pairs(realmDB2) do
                 local locks = data.lockouts or {}
                 if #locks > 0 then
-                    print(string.format("  %s:", ATA.ColorName(charName, data.class)))
+                    ATA.Output(string.format("  %s:", ATA.ColorName(charName, data.class)))
                     for _, lock in ipairs(locks) do
                         local remaining = lock.expires - time()
                         local hours = math.floor(remaining / 3600)
                         local mins  = math.floor((remaining % 3600) / 60)
-                        print(string.format("    %s — resets in %dh %dm", lock.name, hours, mins))
+                        ATA.Output(string.format("    %s — resets in %dh %dm", lock.name, hours, mins))
                     end
                 else
-                    print(string.format("  %s: |cff888888no lockouts|r", ATA.ColorName(charName, data.class)))
+                    ATA.Output(string.format("  %s: |cff888888no lockouts|r", ATA.ColorName(charName, data.class)))
                 end
             end
+            ATA.OutputFlush()
 
         elseif msg == "prof" then
             local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
-            print("|cff00ff00ApeTracksAlts|r — Professions on " .. ATA.realm .. ":")
+            ATA.Output(" ")
+            ATA.Output("|cff00ff00ApeTracksAlts|r — Professions on " .. ATA.realm .. ":")
             for charName, data in pairs(realmDB2) do
                 local profs = data.professions or {}
                 if #profs > 0 then
@@ -879,11 +838,12 @@ local function RegisterSlashCommands()
                     for _, p in ipairs(profs) do
                         parts[#parts+1] = string.format("%s %d/%d", p.name, p.rank, p.maxRank)
                     end
-                    print(string.format("  %s: %s", ATA.ColorName(charName, data.class), table.concat(parts, "  |cff888888·|r  ")))
+                    ATA.Output(string.format("  %s: %s", ATA.ColorName(charName, data.class), table.concat(parts, "  |cff888888·|r  ")))
                 else
-                    print(string.format("  %s: |cff888888not scanned yet — open profession book|r", ATA.ColorName(charName, data.class)))
+                    ATA.Output(string.format("  %s: |cff888888not scanned yet — open profession book|r", ATA.ColorName(charName, data.class)))
                 end
             end
+            ATA.OutputFlush()
 
         elseif msg:sub(1, 6) == "recipe" then
             local query = msg:sub(8):match("^%s*(.-)%s*$")
@@ -893,14 +853,15 @@ local function RegisterSlashCommands()
                 local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
                 local queryLower = query:lower()
                 local found = false
-                print(string.format("|cff00ff00ApeTracksAlts|r Recipes matching '|cffffff00%s|r':", query))
+                ATA.Output(" ")
+                ATA.Output(string.format("|cff00ff00ApeTracksAlts|r — Recipe results: |cffffff00%s|r", query))
                 for charName, data in pairs(realmDB2) do
                     local recipes = data.recipes or {}
                     for profName, profRecipes in pairs(recipes) do
                         for recipeName in pairs(profRecipes) do
                             if recipeName:find(queryLower, 1, true) then
                                 local display = recipeName:gsub("^%l", string.upper)
-                                print(string.format("  %s |cff888888(%s)|r — |cffffff00%s|r",
+                                ATA.Output(string.format("  %s |cff888888(%s)|r — |cffffff00%s|r",
                                     ATA.ColorName(charName, data.class), profName, display))
                                 found = true
                             end
@@ -908,9 +869,16 @@ local function RegisterSlashCommands()
                     end
                 end
                 if not found then
-                    print(string.format("|cff00ff00ApeTracksAlts|r No recipe matching '%s' found.", query))
+                    ATA.Output(string.format("|cff888888No recipe matching '%s' found.|r", query))
                 end
+                ATA.OutputFlush()
             end
+
+        elseif msg == "help" then
+            if ATA.ShowTab then ATA.ShowTab("Help") end
+
+        elseif msg == "output" then
+            if ATA.ToggleOutput then ATA.ToggleOutput() end
 
         elseif msg == "minimap" then
             if ATA.MinimapShow and ATA.MinimapHide then
@@ -927,50 +895,9 @@ local function RegisterSlashCommands()
             end
 
         else
-            print("|cff00ff00ApeTracksAlts|r Commands:")
-            print("  |cffffff00Panel:|r")
-            print("    /ata show                — Open the character panel")
-            print("    /ata hide                — Close the character panel")
-            print("    /ata toggle              — Toggle the character panel")
-            print("    /ata minimap             — Toggle the minimap button")
-            print("  |cffffff00Database:|r")
-            print("    /ata list                — All tracked characters")
-            print("    /ata gold                — Gold summary across all alts")
-            print("    /ata find <item>         — Search for an item across all alts")
-            print("    /ata locks               — Show raid/dungeon lockouts for all alts")
-            print("    /ata prof                — Show professions for all alts")
-            print("    /ata recipe <name>       — Search learned recipes across all alts")
-            print("    /ata purge <name>        — Remove a character from the database")
-            print("    /ata reset               — Wipe the entire database")
-            print("  |cffffff00Wishlist:|r")
-            print("    /ata want [link or name] — Add item to current character's wishlist")
-            print("    /ata want list           — Show all wishlists")
-            print("    /ata want clear <item>   — Remove item from wishlist")
-            print("    /ata want clear all      — Clear entire wishlist")
-            print("  |cffffff00Notes:|r")
-            print("    /ata note <text>              — Set note for current character")
-            print("    /ata note <CharName> <text>   — Set note for any character")
-            print("    /ata note clear [CharName]    — Clear a note")
-            print("    /ata note list                — Show all notes")
-            print("  |cffffff00Guild Bank:|r")
-            print("    /ata guild add           — Register current guild bank")
-            print("    /ata guild remove        — Unregister current guild bank")
-            print("    /ata guild scan          — Scan current guild bank now")
-            print("    /ata guild list          — Show registered guild banks")
-            print("    /ata guild auto on|off   — Toggle auto-register (default: off)")
-            print("  |cffffff00Settings:|r")
-            print("    /ata config              — Show all current settings")
-            print("    /ata set stale <days>    — Set stale threshold (default: 7)")
-            print("    /ata set profstale <days>— Set profession stale threshold (default: 30)")
-            print("    /ata toggle login        — Toggle panel auto-open on login")
-            print("    /ata toggle bags         — Toggle bags in tooltips")
-            print("    /ata toggle bank         — Toggle bank in tooltips")
-            print("    /ata toggle mail         — Toggle mail in tooltips")
-            print("    /ata ignore <name>       — Hide a character from tooltips")
-            print("    /ata ignore              — List ignored characters")
-            print("    /ata unignore <name>     — Remove from ignore list")
-            print("  |cffffff00Other:|r")
-            print("    /ata debug               — DB stats")
+            -- Open the Help tab for the full command reference
+            if ATA.ShowTab then ATA.ShowTab("Help") end
+            print("|cff00ff00ApeTracksAlts|r Opening Help tab — or type /ata help")
         end
     end
 end
