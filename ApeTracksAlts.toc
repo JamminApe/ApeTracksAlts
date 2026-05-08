@@ -1,8 +1,8 @@
 ## Interface: 30300
 ## Title: ApeTracksAlts
-## Notes: Tracks items, gold, currencies, professions, lockouts and alt data.
+## Notes: Tracks items, gold, currencies, professions, lockouts, guild bank and alt data.
 ## Author: JamminApe
-## Version: 4.0
+## Version: 5.0
 ## SavedVariables: ApeTracksAltsDB, ApeTracksAltsCfg
 ## LoadOnDemand: 0
 
@@ -12,4 +12,5 @@ Gold.lua
 Panel.lua
 Minimap.lua
 Wishlist.lua
+GuildBank.lua
 Tooltip.lua

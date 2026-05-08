@@ -49,7 +49,8 @@ function ATA.HandleWantCmd(args)
             else
                 print(string.format("|cff00ff00ApeTracksAlts|r %s's wishlist:", ATA.ColorName(matched, class)))
                 for itemID, itemName in pairs(items) do
-                    print(string.format("  |cffffff00%s|r (ID: %d)", itemName, itemID))
+                    local link = GetItemLink(itemID) or ("|cffffff00" .. itemName .. "|r")
+                    print(string.format("  %s", link))
                 end
             end
         else
@@ -63,7 +64,8 @@ function ATA.HandleWantCmd(args)
                     local class = realmDB[charName] and realmDB[charName].class
                     print(string.format("|cff00ff00ApeTracksAlts|r %s's wishlist:", ATA.ColorName(charName, class)))
                     for itemID, itemName in pairs(items) do
-                        print(string.format("  |cffffff00%s|r (ID: %d)", itemName, itemID))
+                        local link = GetItemLink(itemID) or ("|cffffff00" .. itemName .. "|r")
+                        print(string.format("  %s", link))
                     end
                 end
             end

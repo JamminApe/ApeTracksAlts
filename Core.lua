@@ -2,7 +2,7 @@
 -- Shared DB, utilities, scanning logic, events, and slash commands.
 -- All other modules read from ApeTracksAltsDB and call functions exposed here.
 
-print("|cff00ff00ApeTracksAlts v4.0 loaded|r")
+print("|cff00ff00ApeTracksAlts v5.0 loaded|r")
 
 -------------------------------------------------------------------------------
 -- Saved variable & runtime state
@@ -454,13 +454,13 @@ local function RegisterSlashCommands()
             if query == "" then
                 print("|cff00ff00ApeTracksAlts|r Usage: /ata find <item name>")
             else
-                local realmDB = ApeTracksAltsDB[ATA.realm] or {}
-                local results = {}
+                local realmDB    = ApeTracksAltsDB[ATA.realm] or {}
                 local queryLower = query:lower()
-                -- Collect all unique itemIDs that match the query
                 local matchedIDs = {}
+
+                -- Search character items
                 for _, data in pairs(realmDB) do
-                    for itemID, counts in pairs(data.items or {}) do
+                    for itemID in pairs(data.items or {}) do
                         if not matchedIDs[itemID] then
                             local name = GetItemInfo(itemID)
                             if name and name:lower():find(queryLower, 1, true) then
@@ -469,11 +469,34 @@ local function RegisterSlashCommands()
                         end
                     end
                 end
-                -- For each matched item, find who has it
+
+                -- Also search guild bank items registered by this character
+                local myGuilds = ApeTracksAltsCfg.guild and ApeTracksAltsCfg.guild.chars
+                local myGuildNames = {}
+                if myGuilds and myGuilds[ATA.realm] and myGuilds[ATA.realm][ATA.player] then
+                    for guildName in pairs(myGuilds[ATA.realm][ATA.player]) do
+                        myGuildNames[guildName] = true
+                        local db = ApeTracksAltsDB.guildBanks and
+                                   ApeTracksAltsDB.guildBanks[ATA.realm] and
+                                   ApeTracksAltsDB.guildBanks[ATA.realm][guildName]
+                        if db then
+                            for itemID in pairs(db) do
+                                if not matchedIDs[itemID] then
+                                    local name = GetItemInfo(itemID)
+                                    if name and name:lower():find(queryLower, 1, true) then
+                                        matchedIDs[itemID] = name
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+
                 local found = false
                 for itemID, itemName in pairs(matchedIDs) do
                     found = true
                     print(string.format("|cff00ff00ApeTracksAlts|r |cffffff00%s|r (ID: %d)", itemName, itemID))
+                    -- Character results
                     for charName, data in pairs(realmDB) do
                         local item = data.items and data.items[itemID]
                         if item then
@@ -485,9 +508,18 @@ local function RegisterSlashCommands()
                                 if item.mb  > 0 then parts[#parts+1] = "Mail: "..item.mb  end
                                 print(string.format("  %s — %s (Total: %d)",
                                     ATA.ColorName(charName, data.class),
-                                    table.concat(parts, "  "),
-                                    total))
+                                    table.concat(parts, "  "), total))
                             end
+                        end
+                    end
+                    -- Guild bank results
+                    for guildName in pairs(myGuildNames) do
+                        local db = ApeTracksAltsDB.guildBanks and
+                                   ApeTracksAltsDB.guildBanks[ATA.realm] and
+                                   ApeTracksAltsDB.guildBanks[ATA.realm][guildName]
+                        if db and db[itemID] and db[itemID] > 0 then
+                            print(string.format("  |cff00cccc Guild Bank|r |cff00aaaa(%s)|r — Items: %d",
+                                guildName, db[itemID]))
                         end
                     end
                 end
@@ -620,6 +652,19 @@ local function RegisterSlashCommands()
                 table.insert(ignoreList, ATA.ColorName(charName, class))
             end
             local function onoff(v) return (v ~= false) and "|cff00ff00on|r" or "|cffff4444off|r" end
+            -- Guild banks registered for this character
+            local myGuilds = ApeTracksAltsCfg.guild and ApeTracksAltsCfg.guild.chars
+            local guildList = {}
+            if myGuilds and myGuilds[ATA.realm] and myGuilds[ATA.realm][ATA.player] then
+                for guildName in pairs(myGuilds[ATA.realm][ATA.player]) do
+                    table.insert(guildList, guildName)
+                end
+            end
+            local guildDisplay = {}
+            for _, g in ipairs(guildList) do
+                table.insert(guildDisplay, "|cff00cccc" .. g .. "|r")
+            end
+            local guildStr = #guildDisplay > 0 and table.concat(guildDisplay, ", ") or "|cff888888NA — run /ata guild add at your guild bank|r"
             print("|cff00ff00ApeTracksAlts|r Current Settings:")
             print(string.format("  Stale threshold  : %d days  (/ata set stale <days>)", ApeTracksAltsCfg.stale.days or 7))
             print(string.format("  Prof stale       : %d days  (/ata set profstale <days>)", ApeTracksAltsCfg.stale.profDays or 30))
@@ -628,6 +673,8 @@ local function RegisterSlashCommands()
             print(string.format("  Tooltip bank     : %s  (/ata toggle bank)",  onoff(ttCfg.showBank)))
             print(string.format("  Tooltip mail     : %s  (/ata toggle mail)",  onoff(ttCfg.showMail)))
             print(string.format("  Ignored chars    : %s", #ignoreList > 0 and table.concat(ignoreList, ", ") or "none"))
+            print(string.format("  Guild banks      : %s", guildStr))
+            print(string.format("  Guild auto-reg   : %s", onoff(autoReg)))
 
         elseif msg == "reset" then
             ApeTracksAltsDB = {}
@@ -645,6 +692,163 @@ local function RegisterSlashCommands()
                 ATA.HandleWantCmd(args)
             else
                 print("|cffff4444ApeTracksAlts|r Wishlist module not loaded.")
+            end
+
+        elseif msg:sub(1, 4) == "note" then
+            local args = msg:sub(5):match("^%s*(.-)%s*$") or ""
+            ApeTracksAltsCfg.notes = ApeTracksAltsCfg.notes or {}
+            ApeTracksAltsCfg.notes[ATA.realm] = ApeTracksAltsCfg.notes[ATA.realm] or {}
+            local notes   = ApeTracksAltsCfg.notes[ATA.realm]
+            local realmDB2 = ApeTracksAltsDB[ATA.realm] or {}
+
+            local function GetNotes(charName)
+                notes[charName] = notes[charName] or {}
+                if type(notes[charName]) == "string" then
+                    -- Migrate old single-string format
+                    notes[charName] = { notes[charName] }
+                end
+                return notes[charName]
+            end
+
+            local function PrintNotes(charName)
+                local class = realmDB2[charName] and realmDB2[charName].class
+                local n = GetNotes(charName)
+                if #n == 0 then
+                    print(string.format("|cff00ff00ApeTracksAlts|r %s has no notes.",
+                        ATA.ColorName(charName, class)))
+                else
+                    print(string.format("|cff00ff00ApeTracksAlts|r %s's notes:",
+                        ATA.ColorName(charName, class)))
+                    for i, text in ipairs(n) do
+                        print(string.format("  |cffffff00[%d]|r %s", i, text))
+                    end
+                end
+            end
+
+            if args == "list" then
+                local any = false
+                for charName, n in pairs(notes) do
+                    local list = type(n) == "table" and n or { n }
+                    if #list > 0 then
+                        PrintNotes(charName)
+                        any = true
+                    end
+                end
+                if not any then print("|cff00ff00ApeTracksAlts|r No notes found.") end
+
+            elseif args:sub(1, 5) == "clear" then
+                local rest = args:sub(6):match("^%s*(.-)%s*$")
+                -- /ata note clear [number] or /ata note clear [CharName] [number] or /ata note clear all
+                if rest == "all" then
+                    notes[ATA.player] = {}
+                    local class = realmDB2[ATA.player] and realmDB2[ATA.player].class
+                    print(string.format("|cff00ff00ApeTracksAlts|r All notes cleared for %s.",
+                        ATA.ColorName(ATA.player, class)))
+                    ATA.NotifyDataChanged()
+                else
+                    -- Check if first token is a character name
+                    local firstWord = rest:match("^(%S+)")
+                    local targetChar, numStr
+                    if firstWord then
+                        local matched = nil
+                        for charName in pairs(realmDB2) do
+                            if charName:lower() == firstWord:lower() then matched = charName break end
+                        end
+                        if matched then
+                            targetChar = matched
+                            numStr = rest:sub(#firstWord+1):match("^%s*(.-)%s*$")
+                        else
+                            targetChar = ATA.player
+                            numStr = rest
+                        end
+                    else
+                        targetChar = ATA.player
+                        numStr = rest
+                    end
+                    local num = tonumber(numStr)
+                    local n = GetNotes(targetChar)
+                    if num and n[num] then
+                        local removed = n[num]
+                        table.remove(n, num)
+                        local class = realmDB2[targetChar] and realmDB2[targetChar].class
+                        print(string.format("|cff00ff00ApeTracksAlts|r Removed note [%d] from %s: %s",
+                            num, ATA.ColorName(targetChar, class), removed))
+                        -- Show updated list so player can see renumbering
+                        if #n > 0 then
+                            PrintNotes(targetChar)
+                        else
+                            print(string.format("|cff00ff00ApeTracksAlts|r %s now has no notes.",
+                                ATA.ColorName(targetChar, class)))
+                        end
+                        ATA.NotifyDataChanged()
+                    elseif numStr == "" then
+                        -- /ata note clear with no number — clear all for current char
+                        notes[targetChar] = {}
+                        local class = realmDB2[targetChar] and realmDB2[targetChar].class
+                        print(string.format("|cff00ff00ApeTracksAlts|r All notes cleared for %s.",
+                            ATA.ColorName(targetChar, class)))
+                        ATA.NotifyDataChanged()
+                    else
+                        print(string.format("|cff00ff00ApeTracksAlts|r Invalid note number '%s'. Use /ata note list to see numbers.", numStr))
+                    end
+                end
+
+            elseif args == "" then
+                print("|cff00ff00ApeTracksAlts|r Usage:")
+                print("  /ata note <text>                — Add note for current character (max 3)")
+                print("  /ata note <CharName> <text>     — Add note for any character")
+                print("  /ata note list                  — Show all notes (numbered)")
+                print("  /ata note clear <#>             — Remove note by number")
+                print("  /ata note clear <CharName> <#>  — Remove numbered note for any character")
+                print("  /ata note clear                 — Clear all notes for current character")
+                print("  /ata note clear all             — Clear all notes for current character")
+
+            else
+                -- Add a note — check if first word is a character name
+                local firstWord = args:match("^(%S+)")
+                local targetChar, noteText
+                if firstWord then
+                    local matched = nil
+                    for charName in pairs(realmDB2) do
+                        if charName:lower() == firstWord:lower() then matched = charName break end
+                    end
+                    if matched then
+                        targetChar = matched
+                        noteText = args:sub(#firstWord+1):match("^%s*(.-)%s*$")
+                    else
+                        targetChar = ATA.player
+                        noteText = args
+                    end
+                else
+                    targetChar = ATA.player
+                    noteText = args
+                end
+
+                if noteText == "" then
+                    print("|cff00ff00ApeTracksAlts|r Note text cannot be empty.")
+                else
+                    local n = GetNotes(targetChar)
+                    if #n >= 3 then
+                        local class = realmDB2[targetChar] and realmDB2[targetChar].class
+                        print(string.format("|cff00ff00ApeTracksAlts|r %s already has 3 notes (max). Clear one first with /ata note clear <1-3>.",
+                            ATA.ColorName(targetChar, class)))
+                        PrintNotes(targetChar)
+                    else
+                        table.insert(n, noteText)
+                        local class = realmDB2[targetChar] and realmDB2[targetChar].class
+                        print(string.format("|cff00ff00ApeTracksAlts|r Note [%d] added for %s: %s",
+                            #n, ATA.ColorName(targetChar, class), noteText))
+                        ATA.NotifyDataChanged()
+                    end
+                end
+            end
+
+        elseif msg:sub(1, 5) == "guild" then
+            local args = msg:sub(6):match("^%s*(.-)%s*$") or ""
+            if ATA.HandleGuildCmd then
+                ATA.HandleGuildCmd(args)
+            else
+                print("|cffff4444ApeTracksAlts|r Guild bank module not loaded.")
             end
 
         elseif msg == "locks" then
@@ -740,9 +944,20 @@ local function RegisterSlashCommands()
             print("    /ata reset               — Wipe the entire database")
             print("  |cffffff00Wishlist:|r")
             print("    /ata want [link or name] — Add item to current character's wishlist")
-            print("    /ata want list           — Show current character's wishlist")
+            print("    /ata want list           — Show all wishlists")
             print("    /ata want clear <item>   — Remove item from wishlist")
             print("    /ata want clear all      — Clear entire wishlist")
+            print("  |cffffff00Notes:|r")
+            print("    /ata note <text>              — Set note for current character")
+            print("    /ata note <CharName> <text>   — Set note for any character")
+            print("    /ata note clear [CharName]    — Clear a note")
+            print("    /ata note list                — Show all notes")
+            print("  |cffffff00Guild Bank:|r")
+            print("    /ata guild add           — Register current guild bank")
+            print("    /ata guild remove        — Unregister current guild bank")
+            print("    /ata guild scan          — Scan current guild bank now")
+            print("    /ata guild list          — Show registered guild banks")
+            print("    /ata guild auto on|off   — Toggle auto-register (default: off)")
             print("  |cffffff00Settings:|r")
             print("    /ata config              — Show all current settings")
             print("    /ata set stale <days>    — Set stale threshold (default: 7)")
@@ -839,6 +1054,7 @@ frame:SetScript("OnEvent", function(_, event)
                 ScanCurrencies()
                 ScanLockouts()
                 ScanProfessions()
+                if ATA.MigrateGuildConfig then ATA.MigrateGuildConfig() end
                 ATA.NotifyDataChanged()
             end
         end)

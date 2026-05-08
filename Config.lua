@@ -17,7 +17,12 @@ local defaults = {
         showMail  = true,
     },
     ignore   = {},
-    wishlist = {},   -- [realm][charName][itemID] = itemName
+    wishlist = {},
+    notes    = {},       -- [realm][charName] = "note text"
+    guild = {
+        autoRegister = false,
+        chars        = {},  -- [realm][charName][guildName] = true
+    },
     stale = {
         days     = 7,
         profDays = 30,

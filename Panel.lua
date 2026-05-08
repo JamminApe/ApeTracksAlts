@@ -9,7 +9,7 @@ local headerBtns = {}
 local rowPool, activeRows = {}, {}
 
 local COL = {
-    { key="name",  label="Character", width=130, align="LEFT"   },
+    { key="name",  label="Character", width=145, align="LEFT"   },
     { key="level", label="Lvl",       width=34,  align="CENTER" },
     { key="race",  label="Race",      width=85,  align="LEFT"   },
     { key="ilvl",  label="iLvl",      width=42,  align="CENTER" },
@@ -98,10 +98,72 @@ local function AcquireRow()
         hl:Hide()
         row.hl = hl
         row:EnableMouse(true)
-        row:SetScript("OnEnter", function(self) self.hl:Show() end)
-        row:SetScript("OnLeave", function(self) self.hl:Hide() end)
+
+        -- Set scripts ONCE on creation — always read from self at hover time
+        row:SetScript("OnEnter", function(self)
+            self.hl:Show()
+            local hasLocks = self.lockouts and #self.lockouts > 0
+            local hasProfs = self.professions and #self.professions > 0
+            local hasN     = self.charNotes and #self.charNotes > 0
+            if not hasLocks and not hasProfs and not hasN then
+                GameTooltip:Hide()
+                return
+            end
+            -- Always re-anchor to THIS row so tooltip follows as you move between rows
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:ClearLines()
+            GameTooltip:AddLine(ATA.ColorName(self.charName, self.charClass))
+            if hasN then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffffff00Notes:|r")
+                for i, text in ipairs(self.charNotes) do
+                    if #text <= 50 then
+                        GameTooltip:AddLine(string.format("  [%d] %s", i, text), 1, 1, 1)
+                    else
+                        GameTooltip:AddLine(string.format("  [%d] %s", i, text:sub(1, 50)), 1, 1, 1)
+                        local remaining = text:sub(51)
+                        while #remaining > 0 do
+                            GameTooltip:AddLine("      "..remaining:sub(1,50), 1, 1, 1)
+                            remaining = remaining:sub(51)
+                        end
+                    end
+                end
+            end
+            if hasLocks then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffffff00Lockouts:|r")
+                for _, lock in ipairs(self.lockouts) do
+                    local remaining = lock.expires - time()
+                    if remaining > 0 then
+                        local h = math.floor(remaining / 3600)
+                        local m = math.floor((remaining % 3600) / 60)
+                        GameTooltip:AddLine(string.format("  %s  %dh %dm", lock.name, h, m), 1, 0.5, 0.5)
+                    end
+                end
+            end
+            if hasProfs then
+                GameTooltip:AddLine(" ")
+                GameTooltip:AddLine("|cffffff00Professions:|r")
+                for _, p in ipairs(self.professions) do
+                    GameTooltip:AddLine(string.format("  %s  %d/%d", p.name, p.rank, p.maxRank), 0.8, 0.8, 0.8)
+                end
+            end
+            GameTooltip:Show()
+        end)
+        -- Only hide tooltip when mouse leaves the row AND doesn't enter another row
+        -- We use the panel's OnLeave to do the final hide instead
+        row:SetScript("OnLeave", function(self)
+            self.hl:Hide()
+        end)
     end
+
     row:Show()
+    -- Reset per-refresh data
+    row.charNotes   = {}
+    row.lockouts    = {}
+    row.professions = {}
+    row.charName    = nil
+    row.charClass   = nil
     return row
 end
 
@@ -127,6 +189,9 @@ local function BuildPanel()
     panel:EnableMouse(true)
     panel:SetClampedToScreen(true)
     panel:RegisterForDrag("LeftButton")
+    panel:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+    end)
     panel:SetScript("OnDragStart", function(self) self:StartMoving() end)
     panel:SetScript("OnDragStop", function(self)
         self:StopMovingOrSizing()
@@ -269,13 +334,24 @@ function ATA.PanelRefresh()
         local itemCount = 0
         for _ in pairs(d.items or {}) do itemCount = itemCount+1 end
 
+        -- Get notes for this character (now an array of up to 3)
+        local notesCfg = ApeTracksAltsCfg.notes
+        local charNotes = {}
+        if notesCfg and notesCfg[ATA.realm] and notesCfg[ATA.realm][cn] then
+            local n = notesCfg[ATA.realm][cn]
+            charNotes = type(n) == "table" and n or { n }
+        end
+        local hasNote = #charNotes > 0
+
         local nameStr
+        -- Pencil icon LEFT of name if note exists
+        local prefix = hasNote and "|cffffff00*|r " or "  "
         if isSelf then
-            nameStr = "[*] " .. ATA.ColorName(cn, d.class)
+            nameStr = prefix .. "[*] " .. ATA.ColorName(cn, d.class)
         elseif stale then
-            nameStr = "|cff777777"..cn.." [!]|r"
+            nameStr = prefix .. "|cff777777"..cn.." [!]|r"
         else
-            nameStr = ATA.ColorName(cn, d.class)
+            nameStr = prefix .. ATA.ColorName(cn, d.class)
         end
 
         local lockouts  = d.lockouts or {}
@@ -323,45 +399,11 @@ function ATA.PanelRefresh()
             fs:SetAlpha(stale and 0.5 or 1.0)
         end
 
-        -- Store data for hover tooltips
         row.lockouts    = lockouts
         row.professions = d.professions or {}
         row.charName    = cn
         row.charClass   = d.class
-
-        row:SetScript("OnEnter", function(self)
-            self.hl:Show()
-            local hasLocks = #self.lockouts > 0
-            local hasProfs = #self.professions > 0
-            if not hasLocks and not hasProfs then return end
-            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-            GameTooltip:ClearLines()
-            GameTooltip:AddLine(ATA.ColorName(self.charName, self.charClass))
-            if hasLocks then
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("|cffffff00Lockouts:|r")
-                for _, lock in ipairs(self.lockouts) do
-                    local remaining = lock.expires - time()
-                    if remaining > 0 then
-                        local h = math.floor(remaining / 3600)
-                        local m = math.floor((remaining % 3600) / 60)
-                        GameTooltip:AddLine(string.format("  %s  %dh %dm", lock.name, h, m), 1, 0.5, 0.5)
-                    end
-                end
-            end
-            if hasProfs then
-                GameTooltip:AddLine(" ")
-                GameTooltip:AddLine("|cffffff00Professions:|r")
-                for _, p in ipairs(self.professions) do
-                    GameTooltip:AddLine(string.format("  %s  %d / %d", p.name, p.rank, p.maxRank), 0.8, 0.8, 0.8)
-                end
-            end
-            GameTooltip:Show()
-        end)
-        row:SetScript("OnLeave", function(self)
-            self.hl:Hide()
-            GameTooltip:Hide()
-        end)
+        row.charNotes   = charNotes
 
         totalGold  = totalGold  + (d.gold or 0)
         totalItems = totalItems + itemCount
@@ -407,10 +449,8 @@ function ApeTracksAlts.PanelShow()
     local y = ApeTracksAltsCfg.panel.y
     panel:ClearAllPoints()
     if x and y and y > 0 then
-        print(string.format("|cff00ff00ApeTracksAlts|r Restoring position: x=%d y=%d", x, y))
         panel:SetPoint("TOPLEFT", UIParent, "TOPLEFT", x, -(UIParent:GetHeight() - y))
     else
-        print("|cff00ff00ApeTracksAlts|r No saved position, centering")
         panel:SetPoint("CENTER", UIParent, "CENTER", 0, 0)
     end
     panel:Show()
@@ -432,6 +472,11 @@ function ApeTracksAlts.PanelToggle()
 end
 
 ATA.OnDataChanged = function()
+    -- Don't refresh while hovering a row — would destroy the open tooltip
+    if GameTooltip:IsShown() and GameTooltip:GetOwner() and
+       GameTooltip:GetOwner():GetParent() == panel then
+        return
+    end
     ATA.PanelRefresh()
 end
 
