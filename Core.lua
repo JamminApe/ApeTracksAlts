@@ -924,6 +924,8 @@ frame:RegisterEvent("PLAYER_LEVEL_UP")
 frame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 frame:RegisterEvent("UPDATE_INSTANCE_INFO")
 frame:RegisterEvent("TRADE_SKILL_SHOW")
+frame:RegisterEvent("SKILL_LINES_CHANGED")  -- fires when professions are learned or ranked up
+frame:RegisterEvent("SPELLBOOK_SHOWN")      -- scan when spellbook opens as a safety net
 
 -- Debounced bank scan: restarts on every slot change so the scan always
 -- fires 0.3s after the last deposit/withdrawal, not just on open.
@@ -1057,10 +1059,23 @@ frame:SetScript("OnEvent", function(_, event)
 
     elseif event == "TRADE_SKILL_SHOW" then
         if ATA.realm then
-            -- Small delay so the tradeskill window is fully populated
+            -- Rescan professions in case rank changed, then scan recipes
+            ScanProfessions()
             C_Timer.After(0.5, function()
                 if ATA.realm then ScanRecipes() end
             end)
+        end
+
+    elseif event == "SKILL_LINES_CHANGED" then
+        if ATA.realm then
+            ScanProfessions()
+        end
+
+    elseif event == "SPELLBOOK_SHOWN" then
+        -- Belt-and-suspenders scan when spellbook opens
+        -- catches cases where SKILL_LINES_CHANGED may have fired before ATA was ready
+        if ATA.realm then
+            ScanProfessions()
         end
     end
 end)
