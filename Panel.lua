@@ -332,12 +332,12 @@ function ATA.PanelRefresh()
     for _,e in ipairs(pinned) do table.insert(sorted, e) end
     for _,e in ipairs(others) do table.insert(sorted, e) end
 
-    -- Release only rows we no longer need (character count shrank)
-    -- Keep existing rows and update them in place to preserve hover state
-    while #activeRows > #sorted do
-        local row = table.remove(activeRows)
+    -- Release all active rows back to pool before rebuilding
+    -- This prevents activeRows from accumulating duplicates each refresh
+    for _, row in ipairs(activeRows) do
         ReleaseRow(row)
     end
+    activeRows = {}
 
     local topY = -(TITLE_H + HEADER_H + 6)
     local totalGold, totalItems = 0, 0
@@ -409,8 +409,10 @@ function ATA.PanelRefresh()
 
         local row = AcquireRow()
         row:SetWidth(PANEL_W - PAD*2)
+        row:ClearAllPoints()
         row:SetPoint("TOPLEFT", panel, "TOPLEFT", PAD, topY)
         for i, fs in ipairs(row.cells) do
+            fs:SetText("")           -- clear first to prevent color-code ghost overlap
             fs:SetText(vals[i] or "")
             fs:SetAlpha(stale and 0.5 or 1.0)
         end
@@ -430,15 +432,20 @@ function ATA.PanelRefresh()
     -- Footer
     local footY = topY - 4
     if footerSep then
+        footerSep:ClearAllPoints()
         footerSep:SetPoint("TOPLEFT",  panel, "TOPLEFT",  PAD,  footY)
         footerSep:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, footY)
     end
     if footerLeft then
+        footerLeft:ClearAllPoints()
         footerLeft:SetPoint("TOPLEFT",  panel, "TOPLEFT",  PAD,  footY-4)
+        footerLeft:SetText("")
         footerLeft:SetText("|cffffff00Gold:|r "..FmtGold(totalGold))
     end
     if footerRight then
+        footerRight:ClearAllPoints()
         footerRight:SetPoint("TOPRIGHT", panel, "TOPRIGHT", -PAD, footY-4)
+        footerRight:SetText("")
         footerRight:SetText("|cffffff00Items: "..totalItems.."|r")
     end
 
